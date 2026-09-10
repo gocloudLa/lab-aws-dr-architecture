@@ -1,0 +1,31 @@
+# Estado y archivos locales de Terraform
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/terraform.tfvars
+**/*.auto.tfvars
+**/crash.log
+**/override.tf
+**/*_override.tf
+
+# Secretos y variables locales
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencias y cachés locales
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+
+# Artefactos de construcción
+.build/
+.codex-finalizer/
+artifacts/
+/generated-diagrams/
+
+# Salidas de herramientas Java
+**/target/
+**/.mvn-cache/
