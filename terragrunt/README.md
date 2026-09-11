@@ -1,8 +1,7 @@
 # Stack Terragrunt, por capas
 
 Orquestación por capas al estilo de la Standard Platform (`<layer>/<project>/<environment>`),
-con backend **local**: este lab no usa el bucket compartido de state ni los parámetros
-`/terraform/*` de SSM.
+con backend **local**: este lab no usa un bucket compartido de state remoto.
 
 ## Por qué capas y no un único root module
 
