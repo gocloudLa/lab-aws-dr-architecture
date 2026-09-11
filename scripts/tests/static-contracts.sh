@@ -52,6 +52,20 @@ for workload_main in "$tg_wl_use2/main.tf" "$tg_wl_use1/main.tf"; do
     || fail "Cada workload regional debe configurar KC_DB_URL_PROPERTIES con targetServerType=any"
 done
 
+# tg-apply debe publicar la imagen entre project y workload, y ambas regiones deben recibir
+# el mismo tag mediante IMAGE_TAG.
+project_apply_line=$(awk '/^[[:space:]]*\$\(MAKE\) tg-apply-project$/ { print NR }' "$repo_root/Makefile")
+image_push_line=$(awk '/^[[:space:]]*ALLOW_EXISTING_TAG=yes \$\(MAKE\) build-push TAG=/ { print NR }' "$repo_root/Makefile")
+workload_apply_line=$(awk '/^[[:space:]]*\$\(MAKE\) tg-apply-workload IMAGE_TAG=/ { print NR }' "$repo_root/Makefile")
+[[ -n "$project_apply_line" && -n "$image_push_line" && -n "$workload_apply_line" ]] \
+  || fail "tg-apply debe encadenar project, build-push y workload"
+(( project_apply_line < image_push_line && image_push_line < workload_apply_line )) \
+  || fail "tg-apply debe publicar la imagen después de project y antes de workload"
+for workload_hcl in "$tg_wl_use2/terragrunt.hcl" "$tg_wl_use1/terragrunt.hcl"; do
+  grep -Fq 'container_image_tag = get_env("IMAGE_TAG", "demo-v1")' "$workload_hcl" \
+    || fail "Cada workload debe recibir IMAGE_TAG desde make tg-apply"
+done
+
 # Los chequeos operativos deben consultar el writer efectivo; region_roles sólo refleja el
 # estado inicial y no cambia después de una conmutación.
 grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/preflight.sh" \

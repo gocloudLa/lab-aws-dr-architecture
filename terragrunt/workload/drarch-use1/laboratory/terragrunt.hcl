@@ -54,7 +54,7 @@ inputs = {
 
   # Misma imagen que Ohio (digest idéntico): la task definition debe apuntar a la imagen real
   # para que ARC pueda escalar el servicio durante el switchover sin recrear nada.
-  container_image_tag = "demo-v1"
+  container_image_tag = get_env("IMAGE_TAG", "demo-v1")
 
   # Warm standby: Virginia corre 1 tarea permanentemente, igual que Ohio. La task definition
   # usa targetServerType=any para no rechazar el Aurora reader durante la conexión; ARC debe

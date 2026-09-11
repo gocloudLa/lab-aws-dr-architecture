@@ -40,18 +40,23 @@ etiquetado, con el prefijo de nombre que fija `metadata` en cada capa. **No hace
 ni conectividad interregional**: cada Keycloak conecta siempre al clúster Aurora de su propia
 región (patrón warm standby, ver [architecture.md](architecture.md)).
 
-## 1. Aplicar el stack
+## 1. Aplicar el stack y publicar la imagen
 
 Terragrunt v1 quedó instalado en `~/bin`; asegurate de tenerlo en el `PATH`:
 
 ```bash
 export PATH="$HOME/bin:$PATH"
-make tg-apply     # un comando, respeta el DAG (~20 min; Aurora domina, ~7 min por región)
+make tg-apply IMAGE_TAG=demo-v1
 ```
 
+El target ejecuta tres etapas: aplica `terragrunt/project`, construye y publica la misma imagen
+en ambos ECR, y finalmente aplica `terragrunt/workload` con `IMAGE_TAG`. Así los servicios ECS
+no se crean antes de que exista la imagen. Si el tag ya existe con el mismo digest en ambos
+ECR, se reutiliza; para publicar cambios de la aplicación hay que elegir un tag nuevo.
+
 Es reanudable: si las credenciales expiran a mitad, el state de cada capa ya aplicada
-persiste y alcanza con volver a correrlo. Las dos regiones arrancan con `ecs_desired_count = 1`
-(warm standby). La tarea secundaria puede conectar al endpoint reader por
+persiste y alcanza con volver a correrlo con el mismo `IMAGE_TAG`. Las dos regiones arrancan
+con `ecs_desired_count = 1` (warm standby). La tarea secundaria puede conectar al endpoint reader por
 `targetServerType=any`, pero no se considera apta para tráfico hasta que ARC promueva su
 Aurora y habilite escrituras.
 
@@ -63,14 +68,23 @@ Notas de configuración de este lab, ya fijadas en el código:
 - **Container Insights deshabilitado** en ambos clústeres ECS (no se necesita esa telemetría
   para el lab).
 
-## 2. Publicar la imagen en ambas regiones
+## 2. Publicación manual opcional
 
-Una sola imagen, el mismo tag en los dos ECR. Los repositorios son inmutables: un tag no se
-repisa.
+`tg-apply` ya publica una sola imagen con el mismo tag en los dos ECR. Para ejecutar únicamente
+esa etapa de forma manual se puede usar:
 
 ```bash
 make build-push TAG=demo-v1
 ```
+
+Los repositorios son inmutables: este comando manual rechaza un tag existente.
+Publicar manualmente no cambia los servicios ECS. Para desplegar una versión nueva usar
+`make tg-apply IMAGE_TAG=<tag-nuevo>`; eso actualiza ambas task definitions con el tag recién
+publicado.
+
+Si una ejecución se interrumpe, los targets `tg-apply-project` y `tg-apply-workload` permiten
+reanudar una etapa puntual. El segundo sólo debe ejecutarse después de que la imagen con ese
+`IMAGE_TAG` ya esté en ambos ECR; normalmente conviene reanudar con `make tg-apply`.
 
 ## 3. Verificar el estado warm de las dos regiones
 
@@ -160,11 +174,12 @@ timestamps antes y después para el RPO; si no se puede medir, declararlo **no m
 
 ### Referencia rápida: todos los comandos `make` del ensayo
 
-En orden, desde el stack ya aplicado (`make tg-apply`) con la imagen publicada:
+En orden, incluyendo el despliegue inicial:
 
 | Paso | Comando `make` | Qué hace |
 |---|---|---|
-| Publicar imagen | `make build-push TAG=demo-v1` | Construye una imagen y la sube al ECR de ambas regiones |
+| Desplegar stack | `make tg-apply IMAGE_TAG=demo-v1` | Aplica project, publica la imagen en ambos ECR y aplica workload |
+| Publicar imagen solamente | `make build-push TAG=demo-v1` | Etapa manual opcional; rechaza un tag ya existente |
 | Cargar realm demo | `make bootstrap` | Crea el realm `community-day` y el usuario de demo (idempotente) |
 | Preflight | `make preflight` | Detecta el writer actual; valida allí ECS/OIDC y exige capacidad programada en la reader |
 | Precheck | `make demo-precheck` | Chequeos adicionales de estado previos a la conmutación |

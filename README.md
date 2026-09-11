@@ -25,12 +25,12 @@ Regiones: **us-east-2 (Ohio)** primaria / **us-east-1 (Virginia)** secundaria.
 ## Orquestación
 
 Todo se despliega con **Terragrunt** (que usa Terraform como binario por debajo), separado en
-seis capas para evitar condiciones de carrera entre recursos. Un solo comando aplica el stack
-completo respetando el orden de dependencias:
+seis capas para evitar condiciones de carrera entre recursos. `make` aplica primero las capas
+`project`, publica la imagen en ambos ECR y después aplica las capas `workload`:
 
 ```
 export PATH="$HOME/bin:$PATH"
-make tg-apply
+make tg-apply IMAGE_TAG=demo-v1
 ```
 
 La operación de la demo (bootstrap del realm, switchover, failback) se maneja con targets
@@ -66,8 +66,8 @@ make validate  # sintaxis de scripts, contratos estáticos y terragrunt hcl vali
 Despliegue y operación (requieren credenciales AWS activas):
 
 ```
-make tg-apply                # aplicar el stack completo
-make build-push TAG=demo-v1  # publicar la imagen en ambos ECR
+make tg-apply IMAGE_TAG=demo-v1  # infraestructura, imagen y workloads
+make build-push TAG=demo-v1      # publicación manual opcional
 make bootstrap               # crear el realm y usuario de demo
 
 # Ensayar el switchover a Virginia y seguir la ejecución
@@ -76,6 +76,10 @@ make arc-poll OPERATION=switchover EXECUTION_ID=<id>
 ```
 
 `make help` lista todos los targets disponibles.
+
+Para desplegar un cambio de la aplicación, usar un tag nuevo, por ejemplo
+`make tg-apply IMAGE_TAG=demo-v2`. Ejecutar sólo `build-push` publica una imagen, pero no
+actualiza la task definition de ECS; el despliegue completo lo hace `tg-apply`.
 
 ## Prerrequisitos
 

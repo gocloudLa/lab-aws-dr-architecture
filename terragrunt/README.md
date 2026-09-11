@@ -32,13 +32,14 @@ valores son concretos. Terragrunt aporta el orden (DAG) y el paso de outputs ent
 | `workload/drarch-use1/laboratory` | Virginia: ECS service (warm, 1 tarea) | Misma config que Ohio; conecta al reader, pero recibe tráfico sólo después de la promoción |
 | `workload/drarch-arc/laboratory` | Plan de ARC, rol IAM, registros FAILOVER | Referencia ARNs de Aurora y de los servicios ECS de las dos regiones |
 
-DAG resultante (`make tg-graph`):
+DAG resultante (`make tg-graph`). `make tg-apply` inserta la publicación de la imagen entre
+las capas `project` y `workload`:
 
 ```
-global ──┬─> project use2 ──┬─> workload use2 ──┐
-         │                  │                   ├─> arc
-         └─> project use1 ──┴─> workload use1 ──┘
-              (use1 espera a use2)
+global ──> project use2 ──> project use1
+                     │             │
+                     └──> build-push ──┬─> workload use2 ──┐
+                                      └─> workload use1 ──┴─> arc
 ```
 
 ## Uso
@@ -46,7 +47,7 @@ global ──┬─> project use2 ──┬─> workload use2 ──┐
 ```bash
 make tg-graph     # ver el DAG
 make tg-plan      # plan de todas las capas
-make tg-apply     # un solo comando, respeta el DAG
+make tg-apply IMAGE_TAG=demo-v1  # project -> imagen ECR -> workload
 make tg-output    # outputs agregados que consumen los scripts
 ```
 
@@ -54,8 +55,14 @@ Un `tg-plan` **desde cero** sólo resuelve las tres capas `project`. Las capas `
 leen el ALB y el clúster ECS con data sources, que existen recién después del apply de las
 capas de abajo: es el comportamiento esperado, no un error de configuración.
 
-`tg-apply` es idempotente y reanudable: si se corta a mitad (por ejemplo, porque expiran las
-credenciales), el state de cada capa ya aplicada persiste y basta con volver a correrlo.
+`tg-apply` es reanudable: si se corta a mitad (por ejemplo, porque expiran las credenciales),
+el state de cada capa ya aplicada persiste y basta con volver a correrlo con el mismo
+`IMAGE_TAG`. Si el tag ya existe con el mismo digest en ambos ECR, la etapa de publicación lo
+reutiliza. Para desplegar cambios de la aplicación se debe usar un tag nuevo.
+
+Los targets `make tg-apply-project` y `make tg-apply-workload IMAGE_TAG=<tag>` existen sólo
+para recuperar una ejecución interrumpida. No publicar una imagen con `build-push` y aplicar
+solamente `project`: los servicios ECS se crean o actualizan en la etapa `workload`.
 
 ## Convenciones heredadas de la Standard Platform
 

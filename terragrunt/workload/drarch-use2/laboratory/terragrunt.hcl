@@ -58,8 +58,8 @@ inputs = {
   keycloak_bootstrap_admin_username = dependency.global.outputs.keycloak_bootstrap_admin_username
   keycloak_bootstrap_admin_password = dependency.global.outputs.keycloak_bootstrap_admin_password
 
-  # Imagen publicada en ambos ECR con digest idéntico (make build-push TAG=demo-v1).
-  container_image_tag = "demo-v1"
+  # Imagen publicada en ambos ECR con digest idéntico por make tg-apply.
+  container_image_tag = get_env("IMAGE_TAG", "demo-v1")
 
   # Warm standby: Ohio y Virginia corren 1 tarea con la misma configuración. La región reader
   # acepta la conexión por targetServerType=any, pero ARC debe promoverla antes de darle tráfico.
