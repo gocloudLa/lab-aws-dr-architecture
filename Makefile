@@ -4,7 +4,7 @@ TG_DIR ?= terragrunt
 
 .PHONY: help init validate test-local local-up local-down build-push bootstrap \
 	preflight demo-precheck write-probe fault-stop fault-restore arc-start arc-poll \
-	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-output
+	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-output tg-destroy
 
 help:
 	@echo "Validación y entorno local:"
@@ -17,6 +17,7 @@ help:
 	@echo "  make tg-plan       # plan de todas las capas"
 	@echo "  make tg-apply      # apply de todo el stack en orden de dependencias"
 	@echo "  make tg-output     # outputs agregados que consumen los scripts"
+	@echo "  make tg-destroy    # destruye todo el stack en orden inverso de dependencias"
 	@echo "Operación de la demo:"
 	@echo "  make build-push TAG=demo-v1"
 	@echo "  make bootstrap"
@@ -69,6 +70,13 @@ tg-apply:
 
 tg-output:
 	scripts/show-outputs.sh
+
+# Destruye el stack completo. Terragrunt recorre el DAG en orden inverso (workload antes que
+# project), así que un solo comando basta. Aurora tarda varios minutos por región; si se corta
+# por credenciales expiradas, es reanudable (el state de cada capa ya destruida persiste).
+# Requiere deletion_protection = false en las capas de Aurora (ya es el default del lab).
+tg-destroy:
+	terragrunt run --all destroy --non-interactive --working-dir $(TG_DIR)
 
 # ---------------------------------------------------------------------------
 # Entorno local con Docker
