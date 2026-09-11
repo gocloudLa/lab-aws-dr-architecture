@@ -9,6 +9,29 @@
 **/override.tf
 **/*_override.tf
 
+# Terragrunt
+# Caché donde Terragrunt copia el código y genera backend.tf y versions.tf antes de
+# invocar a Terraform. Es efímera y se regenera en cada corrida.
+**/.terragrunt-cache/
+
+# State local del lab: un archivo por capa bajo terragrunt/.tfstate/<layer>/<project>/<env>/.
+# Este lab no usa backend remoto, así que el state es local y no se versiona.
+terragrunt/.tfstate/
+
+# Unidades que genera `terragrunt stack generate` a partir de terragrunt.stack.hcl.
+**/.terragrunt-stack/
+
+# Salidas de depuración y de render: `--inputs-debug` escribe el primero y
+# `terragrunt render` el segundo.
+terragrunt-debug.tfvars.json
+terragrunt.rendered.hcl
+
+# Reportes de crash del propio binario.
+terragrunt-crash-*
+
+# Nota: los .terraform.lock.hcl de cada capa SÍ se versionan, igual que los de
+# terraform/examples/*, para fijar las versiones de providers entre corridas.
+
 # Secretos y variables locales
 **/.env
 **/.env.*

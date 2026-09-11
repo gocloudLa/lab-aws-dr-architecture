@@ -1,33 +1,89 @@
 #!/usr/bin/env bash
-# Contratos estáticos sobre el código. No consulta AWS ni ejecuta Terraform.
+# Contratos estáticos sobre el código. No consulta AWS ni ejecuta Terraform/Terragrunt.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
-stack="$repo_root/terraform/modules/dr-architecture"
-region_module="$repo_root/terraform/modules/keycloak-region"
 
-# El plan de ARC tiene exactamente dos pasos: primero Aurora, después DNS.
-step_count=$(grep -Ec 'execution_block_type[[:space:]]*=' "$stack/arc.tf" || true)
-[[ "$step_count" -eq 2 ]] || { echo "ARC debe contener exactamente dos execution blocks; contiene $step_count" >&2; exit 1; }
+# Stack Terragrunt: fuente de verdad de la orquestación por capas.
+tg="$repo_root/terragrunt"
+tg_arc="$tg/workload/drarch-arc/laboratory"
+tg_wl_use2="$tg/workload/drarch-use2/laboratory"
+tg_wl_use1="$tg/workload/drarch-use1/laboratory"
+tg_proj_use2="$tg/project/drarch-use2/laboratory"
 
-# No deben reaparecer piezas del diseño retirado.
-if grep -RInE --exclude-dir=.terraform 'aws_db_proxy|DB_PROXY_ENDPOINTS|CustomActionLambda|aws_route53_zone|proxy_writer_gate' \
-  "$repo_root/terraform" "$repo_root/app"; then
-  echo "Quedaron referencias activas al diseño retirado" >&2
-  exit 1
+# Stack Terraform: se conserva hasta validar la migración.
+tf_stack="$repo_root/terraform/modules/dr-architecture"
+tf_region="$repo_root/terraform/modules/keycloak-region"
+
+fail() { echo "$1" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Contratos del stack Terragrunt
+# ---------------------------------------------------------------------------
+
+# Seis capas, ni más ni menos: cada una existe para romper una dependencia que Terraform
+# no puede resolver dentro de un solo state.
+for layer in \
+  project/drarch-global/laboratory \
+  project/drarch-use2/laboratory \
+  project/drarch-use1/laboratory \
+  workload/drarch-use2/laboratory \
+  workload/drarch-use1/laboratory \
+  workload/drarch-arc/laboratory; do
+  [[ -f "$tg/$layer/terragrunt.hcl" ]] || fail "Falta la capa Terragrunt: $layer"
+done
+
+# El plan de ARC tiene exactamente tres pasos: Aurora, escalado de ECS y por último DNS.
+step_count=$(grep -Ec 'execution_block_type[[:space:]]*=' "$tg_arc/main.tf" || true)
+[[ "$step_count" -eq 3 ]] || fail "ARC debe contener exactamente tres execution blocks; contiene $step_count"
+
+# El orden importa: si DNS conmutara antes de escalar, Route 53 publicaría un ALB sin backend.
+aurora_line=$(grep -n 'execution_block_type = "AuroraGlobalDatabase"' "$tg_arc/main.tf" | cut -d: -f1)
+ecs_line=$(grep -n 'execution_block_type = "ECSServiceScaling"' "$tg_arc/main.tf" | cut -d: -f1)
+dns_line=$(grep -n 'execution_block_type = "Route53HealthCheck"' "$tg_arc/main.tf" | cut -d: -f1)
+[[ -n "$aurora_line" && -n "$ecs_line" && -n "$dns_line" ]] || fail "Faltan pasos en el plan de ARC"
+(( aurora_line < ecs_line && ecs_line < dns_line )) || fail "El plan de ARC debe ordenar Aurora, luego ECS y por último DNS"
+
+# Pilot light: cada Keycloak conecta al clúster Aurora de su propia región, nunca al Global
+# Writer Endpoint compartido, así que no hace falta peering entre VPC.
+grep -Eq 'DB_HOST = var\.db_host' "$tg_wl_use2/main.tf" || fail "El workload use2 debe usar var.db_host como DB_HOST"
+grep -Eq 'aurora_cluster_endpoint' "$tg_wl_use2/terragrunt.hcl" || fail "db_host debe venir del endpoint del clúster regional"
+
+# La región en espera arranca en 0 tareas; la escala el plan de ARC.
+grep -Eq 'ecs_desired_count = 0' "$tg_wl_use1/terragrunt.hcl" || fail "El workload use1 debe arrancar en pilot light (0 tareas)"
+
+# El ingress de Aurora sólo abre el CIDR local: si reapareciera el CIDR remoto, volvería la
+# dependencia de peering que este diseño elimina.
+grep -Eq 'cidr_blocks = join\(",", local\.app_cidr_blocks\)' "$tg_proj_use2/main.tf" \
+  || fail "El ingress de Aurora debe usar sólo los CIDR de su propia región"
+grep -q 'peer_app_cidr_blocks' "$tg_proj_use2/main.tf" && fail "Reapareció peer_app_cidr_blocks: eso reintroduce la dependencia de peering"
+
+# Aurora Global Database no admite clases burstable.
+grep -Eq 'contains\(\["t3", "t4g"\]' "$tg_proj_use2/variables.tf" \
+  || fail "Falta la validación que rechaza clases burstable en aurora_instance_class"
+
+# ---------------------------------------------------------------------------
+# Contratos comunes
+# ---------------------------------------------------------------------------
+
+# No deben reaparecer piezas del diseño retirado. Se excluyen .terraform/.terragrunt-cache
+# (módulos de terceros cacheados, que sí usan aws_route53_zone como data source legítimo)
+# y los archivos de estado.
+if grep -RInE --exclude-dir=.terraform --exclude-dir=.terragrunt-cache --exclude-dir=.tfstate \
+  --exclude='terraform.tfstate*' \
+  'aws_db_proxy|DB_PROXY_ENDPOINTS|CustomActionLambda|proxy_writer_gate' \
+  "$repo_root/terraform" "$repo_root/terragrunt" "$repo_root/app"; then
+  fail "Quedaron referencias activas al diseño retirado"
 fi
 
-# Keycloak se conecta siempre al Global Writer Endpoint, en las dos regiones.
-grep -Eq 'global_writer_endpoint[[:space:]]*=[[:space:]]*aws_rds_global_cluster\.this\.endpoint' "$stack/main.tf"
-grep -Eq 'DB_HOST[[:space:]]*=[[:space:]]*var\.global_writer_endpoint' "$region_module/main.tf"
-
 # Contrato TLS de la imagen.
-grep -Eq 'sslmode=verify-full&sslrootcert=' "$repo_root/app/entrypoint.sh"
-grep -Eq 'global-bundle\.pem' "$repo_root/app/Dockerfile"
+grep -Eq 'sslmode=verify-full&sslrootcert=' "$repo_root/app/entrypoint.sh" || fail "Falta el contrato sslmode=verify-full"
+grep -Eq 'global-bundle\.pem' "$repo_root/app/Dockerfile" || fail "Falta el bundle de CA de RDS"
 
 # No mezclar orígenes de módulos: sólo wrappers de gocloudLa o rutas relativas locales.
 # hashicorp/* queda permitido porque es el origen de los providers, no de los módulos.
-foreign=$(grep -RhoE --exclude-dir=.terraform '^[[:space:]]*source[[:space:]]*=[[:space:]]*"[^"]+"' "$repo_root/terraform" \
+foreign=$(grep -RhoE --exclude-dir=.terraform --exclude-dir=.terragrunt-cache \
+  '^[[:space:]]*source[[:space:]]*=[[:space:]]*"[^"]+"' "$repo_root/terraform" "$repo_root/terragrunt" \
   | sed 's/.*"\(.*\)"/\1/' \
   | grep -Ev '^(\.|gocloudLa/|hashicorp/)' || true)
 if [[ -n "$foreign" ]]; then
@@ -36,8 +92,17 @@ if [[ -n "$foreign" ]]; then
   exit 1
 fi
 
-# El wrapper del servicio aún resuelve el clúster por data source. Red, subredes y ALB
-# llegan como valores explícitos, por lo que sólo el clúster conserva depends_on.
-grep -Eq 'depends_on[[:space:]]*=[[:space:]]*\[module\.ecs\]' "$region_module/main.tf"
+# ---------------------------------------------------------------------------
+# Contratos del stack Terraform (legacy, mientras coexista)
+# ---------------------------------------------------------------------------
 
-echo "Contratos Global Writer Endpoint/ARC/naming: OK"
+if [[ -d "$tf_stack" ]]; then
+  tf_steps=$(grep -Ec 'execution_block_type[[:space:]]*=' "$tf_stack/arc.tf" || true)
+  [[ "$tf_steps" -eq 3 ]] || fail "El stack Terraform debe tener tres execution blocks; tiene $tf_steps"
+  grep -Eq 'DB_HOST[[:space:]]*=[[:space:]]*data\.aws_rds_cluster\.this\.endpoint' "$tf_region/main.tf" \
+    || fail "El stack Terraform debe usar el endpoint del clúster regional como DB_HOST"
+  grep -Eq 'depends_on[[:space:]]*=[[:space:]]*\[module\.ecs\]' "$tf_region/main.tf" \
+    || fail "El stack Terraform conserva el depends_on del clúster ECS"
+fi
+
+echo "Contratos de capas/ARC/naming: OK"

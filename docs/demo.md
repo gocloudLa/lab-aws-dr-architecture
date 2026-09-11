@@ -9,14 +9,31 @@ Reproducible en cualquier cuenta AWS. Los pasos con AWS **no fueron ejecutados**
 - Una zona pública Route 53 con un dominio propio.
 - Dos certificados ACM, uno por región (`us-east-2` y `us-east-1`), que cubran `app.<dominio>` y `<key>.app.<dominio>`.
 
-## Elegir variante
+## Elegir orquestación
+
+Durante la migración conviven dos:
+
+| Orquestación | Cuándo | Cómo |
+|---|---|---|
+| **`terragrunt/`** (recomendada) | Red existente. Un comando, sin condiciones de carrera | `make tg-apply` |
+| `terraform/examples/lab` | Stack anterior, se conserva hasta validar la migración | `IAC_MODE=terraform` + `terraform apply` por etapas |
+| `terraform/examples/complete` | Cuenta vacía, crea también VPC/NAT/peering | ídem |
+
+El stack Terragrunt separa el despliegue en seis capas porque los wrappers resuelven ALB,
+target groups y clúster ECS con data sources internos que no se pueden expandir en un único
+state. Ver [terragrunt/README.md](../terragrunt/README.md) para el detalle y el DAG.
+
+Los scripts de `scripts/` leen los outputs de las capas de Terragrunt por defecto; exportar
+`IAC_MODE=terraform` para operar la demo contra el stack anterior.
+
+### Variantes del stack Terraform
 
 | Variante | Cuándo | Qué crea |
 |---|---|---|
 | `terraform/examples/complete` | Cuenta vacía, demo desde cero | VPC, NAT, subredes y peering, más todo el stack |
 | `terraform/examples/lab` | Ya tenés red | Sólo el stack, sobre tu VPC/NAT/subredes |
 
-`lab` resuelve la red por tag `Name`, no por ID. Tu VPC debe tener subredes públicas (ALB), privadas con salida por NAT (ECS) y de base de datos, un security group por defecto etiquetado, y conectividad PostgreSQL con la otra región. Los nombres se declaran en `primary_network` / `secondary_network`.
+`lab` resuelve la red por tag `Name`, no por ID. Tu VPC debe tener subredes públicas (ALB), privadas con salida por NAT (ECS) y de base de datos, y un security group por defecto etiquetado. **No hace falta peering ni conectividad interregional**: cada Keycloak conecta siempre al clúster Aurora de su propia región (patrón pilot light, ver [architecture.md](architecture.md)). Los nombres se declaran en `primary_network` / `secondary_network`.
 
 Los comandos siguientes usan `complete`; para `lab`, cambiar el directorio y exportar `TF_DIR=terraform/examples/lab` antes de correr los scripts.
 
@@ -50,7 +67,7 @@ cd ../../..
 make build-push TAG=demo-v1 TF_DIR=terraform/examples/complete
 ```
 
-## 4. Habilitar los servicios
+## 4. Habilitar el servicio en la región primaria
 
 En `terraform.tfvars`: `container_image_tag = "demo-v1"` y `ecs_desired_count = 1`.
 
@@ -61,7 +78,7 @@ terraform show services.tfplan
 terraform apply services.tfplan
 ```
 
-Ambas regiones quedan *warm*: las dos corren Keycloak, aunque Route 53 entregue tráfico a una sola.
+`ecs_desired_count` sólo controla la región primaria. La secundaria es **pilot light**: su Terraform la fija en 0 tareas sin importar este valor, porque su clúster Aurora es réplica de sólo lectura y Keycloak no podría completar su migración de escritura contra él. El plan de ARC la escala durante la conmutación, después de promover Aurora (ver paso 7).
 
 ## 5. Cargar el realm de demo
 
@@ -88,7 +105,7 @@ make preflight TF_DIR=terraform/examples/complete
 make demo-precheck TF_DIR=terraform/examples/complete
 ```
 
-Exigen las dos tareas ECS en ejecución y los dos endpoints regionales saludables. Consultan AWS; no prueban por sí solos writer, peering, DNS, TLS ni RTO/RPO.
+Exigen la tarea ECS primaria en ejecución y su endpoint regional saludable. La región secundaria está en pilot light (0 tareas) hasta la conmutación, así que su ECS no se valida acá. Consultan AWS; no prueban por sí solos writer, DNS, TLS ni RTO/RPO.
 
 ## 7. Ensayo de conmutación
 
@@ -106,17 +123,17 @@ make arc-start OPERATION=switchover TARGET_REGION=us-east-1 TF_DIR=terraform/exa
 make arc-poll OPERATION=switchover EXECUTION_ID=EXECUTION_ID TF_DIR=terraform/examples/complete
 ```
 
-El plan hace exactamente dos cosas: promueve Aurora en la región destino y después mueve el health check de Route 53. **No hay gate posterior a la promoción**: DNS puede publicar el ALB destino mientras Keycloak todavía renueva DNS y conexiones al nuevo writer. Registrá cualquier `5xx`, fallo de login o intervalo de indisponibilidad.
+El plan hace exactamente tres cosas, en orden estricto: promueve Aurora en la región destino, escala el ECS de esa región de 0 a N tareas (pilot light: recién ahí arranca Keycloak, con su clúster local ya promovido y escribible), y por último mueve el health check de Route 53. El paso de ECS sí es un gate: ARC espera a que la capacidad pedida esté corriendo (o el timeout) antes de tocar el DNS, así que Route 53 no publica un ALB sin backend. No hay, en cambio, comprobación de que Keycloak ya pasó su propio health check de aplicación más allá de lo que reporta el ECS. Registrá cualquier `5xx`, fallo de login o intervalo de indisponibilidad, incluido el tiempo de arranque de Keycloak en la región destino.
 
 Desde un cliente limpio: resolver `app.<dominio>`, entrar, y verificar que el usuario y el perfil de control siguen ahí. La primera operación confirmada cierra el cronómetro. Comparar timestamps antes y después para el RPO; si no se puede medir, declararlo **no medido**.
 
 ## 8. Failback
 
-Recuperar la región original, confirmar writer y reader reales y la salud de ambos Keycloak, y ejecutar un switchover planificado inverso. Correr `terraform plan` después de cada promoción: el writer cambia fuera de Terraform.
+Recuperar la región original, confirmar writer y reader reales y la salud de ambos Keycloak, y ejecutar un switchover planificado inverso. La región que vuelve a quedar en espera queda en pilot light (el propio plan de ARC no la vuelve a bajar a 0 automáticamente en el sentido inverso más que escalando el destino del nuevo switchover); si hace falta bajarla a 0 de forma explícita, usar `aws ecs update-service --desired-count 0` sobre esa región. Correr `terraform plan` después de cada promoción: el writer cambia fuera de Terraform, aunque `desired_count` del ECS está en `ignore_changes` y no genera drift.
 
 ## 9. Desmontar
 
-Detener ambos servicios ECS y confirmar que no haya ejecuciones ARC activas. Conservar un snapshot manual si hay datos a retener. `deletion_protection` está en `true` por defecto: bajarlo a `false` en `terraform.tfvars` sólo cuando el borrado esté autorizado.
+Detener ambos servicios ECS (`aws ecs update-service --desired-count 0` en la región que haya quedado activa; la otra ya puede seguir en pilot light) y confirmar que no haya ejecuciones ARC activas. Conservar un snapshot manual si hay datos a retener. `deletion_protection` está en `true` por defecto: bajarlo a `false` en `terraform.tfvars` sólo cuando el borrado esté autorizado.
 
 ```bash
 terraform plan -destroy -out=destroy.tfplan

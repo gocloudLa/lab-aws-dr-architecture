@@ -33,6 +33,11 @@ EOF
 chmod +x "$stub_dir/terraform" "$stub_dir/aws"
 
 capture="$stub_dir/request.json"
+
+# El stub reemplaza el binario terraform, así que este test corre en IAC_MODE=terraform.
+# Lo que valida es la lógica de start-arc/poll-arc, que es igual con las dos orquestaciones.
+export IAC_MODE=terraform
+
 PATH="$stub_dir:$PATH" AWS_CAPTURE="$capture" "$repo_root/scripts/start-arc.sh" switchover us-east-1 >/dev/null
 jq -e '.targetRegion == "us-east-1" and .action == "activate" and .mode == "graceful" and .latestVersion == "true"' "$capture" >/dev/null
 

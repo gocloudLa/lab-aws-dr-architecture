@@ -17,7 +17,7 @@ resolve_repository() {
     printf '%s' "$explicit_url"
     return
   fi
-  need terraform
+  # tf_outputs valida por sí solo la herramienta que corresponda según IAC_MODE.
   map_value ecr_repository_urls "$region"
 }
 
