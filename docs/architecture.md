@@ -61,6 +61,34 @@ El plan de ARC Region switch tiene exactamente tres pasos, en orden estricto:
 
 El paso 2 sí es un gate real: ARC espera a que el ECS destino alcance la capacidad pedida (o el timeout) antes de pasar al paso 3, así que el DNS no se mueve hacia un backend sin tareas corriendo. No hay comprobación de que Keycloak ya pasó su health check de aplicación (`/health/ready`) más allá de lo que el propio ECS/ALB reportan; ese período de arranque hay que medirlo y reportarlo en el ensayo. La continuidad de sesión de Keycloak no está garantizada; se admite re-login.
 
+### La región saliente no se apaga automáticamente (y por qué)
+
+Tras un switchover, la región que queda como secundaria mantiene el `desired_count` con el que ARC la dejó (típicamente 1). El plan **no** la vuelve a 0 por sí solo, y esto no es un descuido de configuración sino un límite del servicio: **un plan de tipo `activePassive` no admite workflows con `workflow_target_action = "deactivate"`**. La API los rechaza explícitamente al crear/actualizar el plan:
+
+```
+ValidationException: activePassive plans must not specify target action 'deactivate'.
+```
+
+Sólo se permiten workflows `activate` (uno por región). En consecuencia, ARC no ejecuta ninguna acción sobre la región que se desactiva. Para devolverla a pilot light hay que bajarla a 0 fuera del plan:
+
+```bash
+aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0
+```
+
+Se probó agregar los workflows `deactivate` (con un paso `ECSServiceScaling` a `target_percent = 0`) y AWS los rechazó con el error de arriba. Una alternativa sería un paso `custom_action_lambda` dentro del workflow `activate`, pero reintroduce una Lambda que el diseño busca evitar.
+
+### Por qué la región en espera no puede correr "warm" (en 1 tarea)
+
+Una idea tentadora es dejar las dos regiones siempre en 1 tarea (warm standby) y saltear el escalado. **No funciona con este Keycloak.** El driver JDBC de PostgreSQL está configurado con `targetServerType=primary`: sólo se conecta al nodo *writer*. Mientras una región es secundaria, su clúster Aurora local es de sólo lectura, así que la tarea de Keycloak ni siquiera abre la conexión y falla al arrancar, entrando en un bucle de reinicio. Verificado contra el log real de la tarea:
+
+```
+ERROR: Could not find a server with specified targetServerType: primary
+ERROR: Failed to obtain JDBC connection
+ERROR: Failed to start server in (production) mode
+```
+
+Por eso el pilot light (secundaria en 0 tareas) es **obligatorio**, y el paso `ECSServiceScaling` del plan es imprescindible: arranca Keycloak en la región destino recién *después* de que su Aurora fue promovido a writer, que es el único momento en que el driver puede conectar.
+
 ## Estructura del código
 
 La orquestación es Terragrunt por capas:
