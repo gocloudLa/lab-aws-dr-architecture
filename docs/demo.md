@@ -125,20 +125,13 @@ usar `make write-probe`, para tener un dato de control.
 # 1. (Opcional) Dejar un dato de control escrito contra el writer actual
 make write-probe
 
-# 2. (Opcional) Simular la caída de la aplicación en la región activa
-make fault-stop REGION=us-east-2
-
-# 3. Conmutar. switchover no espera pérdida; failover la acepta explícitamente.
+# 2. Conmutar. switchover no espera pérdida; failover la acepta explícitamente.
 make arc-start OPERATION=switchover TARGET_REGION=us-east-1
 # ACCEPT_DATA_LOSS=yes make arc-start OPERATION=failover TARGET_REGION=us-east-1
 
-# 4. Seguir la ejecución hasta que complete (usar el executionId que devolvió arc-start)
+# 3. Seguir la ejecución hasta que complete (usar el executionId que devolvió arc-start)
 make arc-poll OPERATION=switchover EXECUTION_ID=us-east-1/xxxxxxxxxxxxxxxx
 ```
-
-`fault-stop` no inicia ARC ni es obligatorio para un switchover. Se usa sólo cuando se quiere
-demostrar una caída de la capa ECS; para una conmutación planificada se puede ejecutar
-`arc-start` directamente.
 
 El plan del lab está configurado inicialmente con `arc_aurora_behavior = "switchoverOnly"`.
 Para ensayar `OPERATION=failover`, primero hay que cambiarlo a `"failover"`, aplicar la capa
@@ -176,8 +169,6 @@ En orden, desde el stack ya aplicado (`make tg-apply`) con la imagen publicada:
 | Preflight | `make preflight` | Detecta el writer actual; valida allí ECS/OIDC y exige capacidad programada en la reader |
 | Precheck | `make demo-precheck` | Chequeos adicionales de estado previos a la conmutación |
 | Dato de control | `make write-probe` | Escribe un registro de control contra el writer actual |
-| Simular caída | `make fault-stop REGION=us-east-2` | Baja el ECS de la región activa para forzar el escenario |
-| Restaurar caída | `make fault-restore REGION=us-east-2` | Revierte el `fault-stop` |
 | **Iniciar switchover** | `make arc-start OPERATION=switchover TARGET_REGION=us-east-1` | Dispara el plan ARC hacia la región destino; devuelve `executionId` |
 | **Seguir switchover** | `make arc-poll OPERATION=switchover EXECUTION_ID=<id>` | Sigue la ejecución hasta `completed` |
 | Failover (con pérdida) | `ACCEPT_DATA_LOSS=yes make arc-start OPERATION=failover TARGET_REGION=us-east-1` | Igual que switchover pero acepta posible pérdida de datos |

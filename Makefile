@@ -3,7 +3,7 @@ TG_DIR ?= terragrunt
 .DEFAULT_GOAL := help
 
 .PHONY: help init validate test-local build-push bootstrap \
-	preflight demo-precheck write-probe fault-stop fault-restore arc-start arc-poll \
+	preflight demo-precheck write-probe arc-start arc-poll \
 	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-output tg-destroy
 
 help:
@@ -23,8 +23,6 @@ help:
 	@echo "  make preflight"
 	@echo "  make demo-precheck"
 	@echo "  make write-probe"
-	@echo "  make fault-stop REGION=us-east-2"
-	@echo "  make fault-restore REGION=us-east-2"
 	@echo "  make arc-start OPERATION=switchover TARGET_REGION=us-east-1"
 	@echo "  make arc-poll OPERATION=switchover EXECUTION_ID=<id>"
 
@@ -97,15 +95,6 @@ demo-precheck:
 
 write-probe:
 	scripts/write-probe.sh
-
-# Simula y revierte la caída de ECS; requiere una región válida de la demo.
-fault-stop:
-	@test -n "$(REGION)" || { echo "Falta REGION. Uso: make fault-stop REGION=us-east-2" >&2; exit 64; }
-	scripts/app-fault.sh stop "$(REGION)"
-
-fault-restore:
-	@test -n "$(REGION)" || { echo "Falta REGION. Uso: make fault-restore REGION=us-east-2" >&2; exit 64; }
-	scripts/app-fault.sh restore "$(REGION)"
 
 # OPERATION acepta switchover o failover. Failover exige ACCEPT_DATA_LOSS=yes.
 arc-start:
