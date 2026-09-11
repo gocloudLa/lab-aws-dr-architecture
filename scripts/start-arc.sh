@@ -18,8 +18,12 @@ case "$operation" in
 esac
 plan_arn=$(output_value arc_plan_arn)
 
+# latestVersion espera el número de versión del plan como string (no un booleano):
+# el servicio compara el valor contra la última versión disponible. Se resuelve con get-plan.
+plan_version=$(aws arc-region-switch get-plan --region "$target" --arn "$plan_arn" --query 'plan.version' --output text)
+
 request=$(temp_json); trap 'rm -f "$request"' EXIT
-jq -n --arg plan "$plan_arn" --arg target "$target" --arg comment "Demo $operation iniciada por operador" \
-  '{planArn:$plan,targetRegion:$target,action:"activate",mode:"graceful",latestVersion:"true",comment:$comment}' >"$request"
+jq -n --arg plan "$plan_arn" --arg target "$target" --arg version "$plan_version" --arg comment "Demo $operation iniciada por operador" \
+  '{planArn:$plan,targetRegion:$target,action:"activate",mode:"graceful",latestVersion:$version,comment:$comment}' >"$request"
 aws arc-region-switch start-plan-execution --region "$target" --cli-input-json "file://$request" --output json
 echo "Ejecución iniciada siempre en modo graceful; conserve executionId para poll-arc.sh."
