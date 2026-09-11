@@ -73,6 +73,8 @@ grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts
 grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/demo-precheck.sh" \
   || fail "demo-precheck debe validar la región writer efectiva"
 for script in "$repo_root/scripts/preflight.sh" "$repo_root/scripts/demo-precheck.sh"; do
+  grep -Fq "(.failures | length) == 0 and (.services | length) == 1" "$script" \
+    || fail "La validación ECS debe preservar el objeto raíz de describe-services"
   grep -Fq '.services[0].runningCount >= .services[0].desiredCount' "$script" \
     || fail "El warm standby debe exigir tareas ECS corriendo"
   grep -Fq 'OIDC regional no está listo' "$script" \

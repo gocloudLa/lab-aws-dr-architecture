@@ -19,7 +19,7 @@ for region in us-east-2 us-east-1; do
   cluster=$(jq -er --arg key "$key" '.ecs_cluster_names.value[$key]' <<<"$outputs")
   service=$(jq -er --arg key "$key" '.ecs_service_names.value[$key]' <<<"$outputs")
   service_state=$(aws ecs describe-services --region "$region" --cluster "$cluster" --services "$service" --output json)
-  jq -e '.failures | length == 0 and (.services | length) == 1' <<<"$service_state" >/dev/null \
+  jq -e '(.failures | length) == 0 and (.services | length) == 1' <<<"$service_state" >/dev/null \
     || { echo "El servicio ECS no existe o tiene fallas en $region" >&2; exit 70; }
   jq '{region:"'"$region"'", desired:.services[0].desiredCount, running:.services[0].runningCount, deployments:.services[0].deployments|length}' <<<"$service_state"
   jq -e '.services[0].desiredCount > 0 and .services[0].runningCount >= .services[0].desiredCount' <<<"$service_state" >/dev/null \

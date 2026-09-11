@@ -28,7 +28,7 @@ for region in us-east-2 us-east-1; do
   aws ecs describe-clusters --region "$region" --clusters "$cluster" --output json \
     | jq -e '.failures | length == 0' >/dev/null
   service_state=$(aws ecs describe-services --region "$region" --cluster "$cluster" --services "$service" --output json)
-  jq -e '.failures | length == 0 and (.services | length) == 1' <<<"$service_state" >/dev/null \
+  jq -e '(.failures | length) == 0 and (.services | length) == 1' <<<"$service_state" >/dev/null \
     || { echo "El servicio ECS no existe o tiene fallas en $region" >&2; exit 70; }
   jq -e '.services[0].desiredCount > 0 and .services[0].runningCount >= .services[0].desiredCount' <<<"$service_state" >/dev/null \
     || { echo "ECS warm no está estable en $region" >&2; exit 70; }
