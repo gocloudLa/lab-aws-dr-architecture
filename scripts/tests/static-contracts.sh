@@ -45,7 +45,7 @@ dns_line=$(grep -n 'execution_block_type = "Route53HealthCheck"' "$tg_arc/main.t
 grep -Eq 'DB_HOST = var\.db_host' "$tg_wl_use2/main.tf" || fail "El workload use2 debe usar var.db_host como DB_HOST"
 grep -Eq 'aurora_cluster_endpoint' "$tg_wl_use2/terragrunt.hcl" || fail "db_host debe venir del endpoint del clúster regional"
 
-# Warm standby: ambas regiones corren 1 tarea y aceptan el endpoint local aunque sea reader.
+# Warm standby: ambas regiones configuran desired_count=1 aunque la reader no esté saludable.
 grep -Eq 'ecs_desired_count = 1' "$tg_wl_use1/terragrunt.hcl" || fail "El workload use1 debe correr warm (1 tarea)"
 for workload_main in "$tg_wl_use2/main.tf" "$tg_wl_use1/main.tf"; do
   grep -Fq 'KC_DB_URL_PROPERTIES = "?targetServerType=any"' "$workload_main" \
@@ -68,17 +68,18 @@ done
 
 # Los chequeos operativos deben consultar el writer efectivo; region_roles sólo refleja el
 # estado inicial y no cambia después de una conmutación.
-grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/preflight.sh" \
-  || fail "preflight debe validar la región writer efectiva"
 grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/demo-precheck.sh" \
   || fail "demo-precheck debe validar la región writer efectiva"
-for script in "$repo_root/scripts/preflight.sh" "$repo_root/scripts/demo-precheck.sh"; do
+[[ ! -e "$repo_root/scripts/preflight.sh" ]] || fail "preflight.sh debe permanecer consolidado en demo-precheck.sh"
+for script in "$repo_root/scripts/demo-precheck.sh"; do
   grep -Fq "(.failures | length) == 0 and (.services | length) == 1" "$script" \
     || fail "La validación ECS debe preservar el objeto raíz de describe-services"
   grep -Fq '.services[0].runningCount >= .services[0].desiredCount' "$script" \
-    || fail "El warm standby debe exigir tareas ECS corriendo"
-  grep -Fq 'OIDC regional no está listo' "$script" \
-    || fail "El warm standby debe validar OIDC regional"
+    || fail "La región writer debe exigir estabilidad ECS"
+  grep -Fq "jq -e '.services[0].desiredCount > 0'" "$script" \
+    || fail "La región reader warm sólo debe exigir desiredCount > 0"
+  grep -Fq 'if [[ "$region" == "$writer_region" ]]' "$script" \
+    || fail "Los controles de writer y reader deben estar separados"
 done
 
 # El ingress de Aurora sólo abre el CIDR local: si reapareciera el CIDR remoto, volvería la

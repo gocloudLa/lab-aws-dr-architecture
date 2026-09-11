@@ -29,7 +29,7 @@ valores son concretos. Terragrunt aporta el orden (DAG) y el paso de outputs ent
 | `project/drarch-use2/laboratory` | Ohio: ECR, Aurora, ALB, clúster ECS | El clúster regional necesita el Global Database ya existente |
 | `project/drarch-use1/laboratory` | Virginia: ídem | Un clúster secundario sólo puede unirse cuando el primario existe |
 | `workload/drarch-use2/laboratory` | Ohio: ECS service Keycloak | Necesita el listener del ALB, el ECR y el endpoint de Aurora ya creados |
-| `workload/drarch-use1/laboratory` | Virginia: ECS service (warm, 1 tarea) | Misma config que Ohio; conecta al reader, pero recibe tráfico sólo después de la promoción |
+| `workload/drarch-use1/laboratory` | Virginia: ECS service (`desiredCount=1`) | Puede reiniciarse/unhealthy contra el reader; recibe tráfico sólo después de la promoción |
 | `workload/drarch-arc/laboratory` | Plan de ARC, rol IAM, registros FAILOVER | Referencia ARNs de Aurora y de los servicios ECS de las dos regiones |
 
 DAG resultante (`make tg-graph`). `make tg-apply` inserta la publicación de la imagen entre

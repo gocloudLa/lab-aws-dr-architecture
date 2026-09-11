@@ -105,6 +105,6 @@ output "zone_public" {
 }
 
 output "aurora_instance_class" {
-  description = "Clase de instancia provisioned del clúster Aurora; el preflight valida que exista en la región."
+  description = "Clase de instancia provisioned del clúster Aurora; demo-precheck valida que exista en la región."
   value       = var.aurora_instance_class
 }

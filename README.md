@@ -6,9 +6,10 @@ Lab de Disaster Recovery en AWS para AWS Community Day: recuperación regional d
 sobre **Aurora PostgreSQL Global Database**, con conmutación orquestada por **AWS Application
 Recovery Controller (ARC) Region switch**.
 
-El patrón es **warm standby regional**: las dos regiones corren su ECS con 1 tarea y su Aurora
-replicando. La región en espera mantiene Keycloak corriendo y puede conectar al reader con
-`targetServerType=any`, pero no se considera apta para tráfico
+El patrón es **warm standby regional**: las dos regiones configuran su ECS con 1 tarea deseada y
+su Aurora replicando. En la región en espera el scheduler conserva `desiredCount=1`, aunque
+Keycloak pueda reiniciarse o quedar unhealthy contra el reader. `targetServerType=any` permite
+intentar la conexión, pero la región no se considera apta para tráfico
 porque Aurora todavía no permite escrituras. Ante un DR, ARC promueve Aurora en la región
 destino, reafirma su ECS y recién entonces conmuta el DNS público.
 
@@ -40,7 +41,7 @@ La operación de la demo (bootstrap del realm, switchover, failback) se maneja c
 
 - `app/` — Imagen Docker de Keycloak (TLS a Aurora, health checks)
 - `docs/` — Documentación: arquitectura, guía de la demo, diagramas
-- `scripts/` — Scripts de operación (bootstrap, ARC, preflight, build-push)
+- `scripts/` — Scripts de operación (bootstrap, demo-precheck, ARC y build-push)
 - `terragrunt/` — Stack por capas: project (global, use2, use1) + workload
 - `Makefile` — Targets de validación, despliegue y operación
 

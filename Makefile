@@ -4,7 +4,7 @@ IMAGE_TAG ?= demo-v1
 .DEFAULT_GOAL := help
 
 .PHONY: help init validate test-local build-push bootstrap \
-	preflight demo-precheck write-probe arc-start arc-poll \
+	demo-precheck write-probe arc-start arc-poll \
 	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-apply-project \
 	tg-apply-workload tg-output tg-destroy
 
@@ -25,7 +25,6 @@ help:
 	@echo "Operación de la demo:"
 	@echo "  make build-push TAG=demo-v1"
 	@echo "  make bootstrap"
-	@echo "  make preflight"
 	@echo "  make demo-precheck"
 	@echo "  make write-probe"
 	@echo "  make arc-start OPERATION=switchover TARGET_REGION=us-east-1"
@@ -116,11 +115,7 @@ build-push:
 bootstrap:
 	scripts/bootstrap.sh
 
-# Verifica prerrequisitos de AWS, ARC y el estado esperado de cada región.
-preflight:
-	scripts/preflight.sh
-
-# Confirma que la aplicación y el OIDC del escritor estén listos antes de la demo.
+# Verifica AWS/Aurora/ARC y el estado esperado del writer y la reader antes de la demo.
 demo-precheck:
 	scripts/demo-precheck.sh
 
