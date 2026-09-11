@@ -113,11 +113,11 @@ reanudar una etapa puntual. El segundo sólo debe ejecutarse después de que la 
 
 ## 3. Verificar el estado warm de las dos regiones
 
-Las dos regiones arrancan con su ECS service en 1 tarea (**warm standby**, misma config). La
-primaria inicial (Ohio) debe correr sana. La secundaria inicial (Virginia) conserva su tarea
-programada y el driver acepta el reader por `targetServerType=any`; eso no habilita escrituras
-ni garantiza que Keycloak esté listo para servir tráfico. La promoción de Aurora durante la
-conmutación habilita la operación completa en Virginia (ver paso 6).
+Las dos regiones arrancan con su ECS service en 1 tarea **corriendo** (**warm standby**, misma
+config) y su endpoint OIDC regional responde. Virginia acepta el Aurora reader por
+`targetServerType=any`; esto permite mantener Keycloak iniciado, pero no habilita escrituras ni
+la vuelve apta para recibir tráfico. La promoción de Aurora durante la conmutación habilita la
+operación completa en Virginia (ver paso 6).
 
 ## 4. Cargar el realm de demo
 
@@ -148,11 +148,10 @@ make demo-precheck
 ```
 
 Consultan Aurora para identificar el **writer actual**, incluso después de un switchover. En
-esa región exigen la tarea ECS en ejecución y el endpoint regional OIDC saludable. De la
-región reader sólo validan que el servicio conserve capacidad programada (`desiredCount > 0`):
-un `runningCount` menor o la falta de OIDC no bloquean el preflight mientras siga siendo
-reader. También comprueban la evaluación del plan ARC; no miden por sí solos RTO/RPO ni una
-operación funcional de escritura en la región warm.
+ambas regiones exigen la tarea ECS en ejecución (`runningCount >= desiredCount`) y el endpoint
+OIDC regional saludable. En Virginia eso valida que Keycloak está warm y puede atender lecturas;
+no prueba una operación de escritura ni la habilita para tráfico mientras Aurora siga reader.
+También comprueban la evaluación del plan ARC; no miden por sí solos RTO/RPO.
 
 ## 6. Ensayo de conmutación (switchover)
 
@@ -185,8 +184,8 @@ seguí con `make arc-poll`. Iniciar un segundo `arc-start` mientras hay una ejec
 falla con `There is already an execution ongoing`: es la misma conmutación, no un error.
 
 El plan hace exactamente tres cosas, en orden estricto: promueve Aurora en la región destino,
-reafirma el ECS de esa región (warm standby: ya tenía capacidad programada, pero recién ahora
-su clúster local permite escrituras), y por último mueve el health check de Route 53. El
+reafirma el ECS de esa región (warm standby: su tarea ya estaba corriendo, pero recién ahora su
+clúster local permite escrituras), y por último mueve el health check de Route 53. El
 paso de ECS sí es un gate: ARC espera a que la capacidad pedida esté corriendo (o el timeout)
 antes de tocar el DNS, así que Route 53 no publica un ALB sin backend. No hay, en cambio,
 comprobación de que Keycloak ya pasó su propio health check de aplicación más allá de lo que
@@ -206,7 +205,7 @@ En orden, incluyendo el despliegue inicial:
 | Desplegar stack | `make tg-apply IMAGE_TAG=demo-v1` | Aplica project, publica la imagen en ambos ECR y aplica workload |
 | Publicar imagen solamente | `make build-push TAG=demo-v1` | Etapa manual opcional; rechaza un tag ya existente |
 | Cargar realm demo | `make bootstrap` | Crea el realm `community-day` y el usuario de demo (idempotente) |
-| Preflight | `make preflight` | Detecta el writer actual; valida allí ECS/OIDC y exige capacidad programada en la reader |
+| Preflight | `make preflight` | Detecta el writer actual y valida ECS/OIDC en ambas regiones; la reader sigue sin tráfico ni escrituras |
 | Precheck | `make demo-precheck` | Chequeos adicionales de estado previos a la conmutación |
 | Dato de control | `make write-probe` | Escribe un registro de control contra el writer actual |
 | **Iniciar switchover** | `make arc-start OPERATION=switchover TARGET_REGION=us-east-1` | Dispara el plan ARC hacia la región destino; devuelve `executionId` |
@@ -233,7 +232,7 @@ Validar después: el writer de Aurora volvió a la región original, su ECS corr
 
 La región que queda en espera sigue en 1 tarea: el plan de ARC sólo escala la región que
 activa, no apaga la saliente. Con warm standby eso es el comportamiento esperado — la saliente
-vuelve a su estado de espera con capacidad programada y Aurora reader. Aunque
+vuelve a su estado de espera con Keycloak corriendo y Aurora reader. Aunque
 `targetServerType=any` permita abrir la conexión, no se la considera apta para tráfico mientras
 no pueda escribir. Si excepcionalmente quisieras apagarla del todo, bajála a mano con
 `aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0`;

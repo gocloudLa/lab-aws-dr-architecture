@@ -11,7 +11,7 @@ curl --fail --silent --show-error "$KEYCLOAK_URL/realms/$realm/.well-known/openi
   | jq -e --arg issuer "$expected_issuer" '.issuer == $issuer' >/dev/null
 
 # Se consulta el writer efectivo para que el precheck siga siendo válido después de un
-# switchover. La región reader sólo debe conservar su capacidad warm programada.
+# switchover. Ambas regiones deben conservar Keycloak warm y responder OIDC de sólo lectura.
 writer_region=$(current_writer_region "$outputs")
 echo "Aurora writer actual: $writer_region"
 for region in us-east-2 us-east-1; do
@@ -22,18 +22,12 @@ for region in us-east-2 us-east-1; do
   jq -e '.failures | length == 0 and (.services | length) == 1' <<<"$service_state" >/dev/null \
     || { echo "El servicio ECS no existe o tiene fallas en $region" >&2; exit 70; }
   jq '{region:"'"$region"'", desired:.services[0].desiredCount, running:.services[0].runningCount, deployments:.services[0].deployments|length}' <<<"$service_state"
-  if [[ "$region" == "$writer_region" ]]; then
-    jq -e '.services[0].desiredCount > 0 and .services[0].runningCount >= .services[0].desiredCount' <<<"$service_state" >/dev/null \
-      || { echo "ECS de la región writer no está estable en $region" >&2; exit 70; }
-    regional_url=$(jq -er --arg key "$key" '.regional_app_urls.value[$key]' <<<"$outputs")
-    curl --fail --silent --show-error "$regional_url/realms/$realm/.well-known/openid-configuration" \
-      | jq -e --arg issuer "$expected_issuer" '.issuer == $issuer' >/dev/null \
-      || { echo "OIDC regional no está listo en $region" >&2; exit 70; }
-  else
-    # Warm standby: no se exige runningCount ni OIDC mientras Aurora sea reader.
-    jq -e '.services[0].desiredCount > 0' <<<"$service_state" >/dev/null \
-      || { echo "ECS reader debería estar warm (desiredCount > 0) en $region" >&2; exit 70; }
-  fi
+  jq -e '.services[0].desiredCount > 0 and .services[0].runningCount >= .services[0].desiredCount' <<<"$service_state" >/dev/null \
+    || { echo "ECS warm no está estable en $region" >&2; exit 70; }
+  regional_url=$(jq -er --arg key "$key" '.regional_app_urls.value[$key]' <<<"$outputs")
+  curl --fail --silent --show-error "$regional_url/realms/$realm/.well-known/openid-configuration" \
+    | jq -e --arg issuer "$expected_issuer" '.issuer == $issuer' >/dev/null \
+    || { echo "OIDC regional no está listo en $region" >&2; exit 70; }
 done
 plan_arn=$(jq -er '.arc_plan_arn.value' <<<"$outputs")
 behavior=$(jq -er '.arc_aurora_behavior.value' <<<"$outputs")

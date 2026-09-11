@@ -72,6 +72,12 @@ grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts
   || fail "preflight debe validar la región writer efectiva"
 grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/demo-precheck.sh" \
   || fail "demo-precheck debe validar la región writer efectiva"
+for script in "$repo_root/scripts/preflight.sh" "$repo_root/scripts/demo-precheck.sh"; do
+  grep -Fq '.services[0].runningCount >= .services[0].desiredCount' "$script" \
+    || fail "El warm standby debe exigir tareas ECS corriendo"
+  grep -Fq 'OIDC regional no está listo' "$script" \
+    || fail "El warm standby debe validar OIDC regional"
+done
 
 # El ingress de Aurora sólo abre el CIDR local: si reapareciera el CIDR remoto, volvería la
 # dependencia de peering que este diseño elimina.

@@ -21,11 +21,11 @@ El diagrama editable de toda la solución está en [diagrams](diagrams).
 
 ## Warm standby regional
 
-Las dos regiones corren con la **misma configuración**: clúster Aurora replicando y ECS con 1 tarea (`desired_count=1`, autoscaling `min=max=1`). La región activa sirve tráfico normalmente. La región en espera conserva su tarea programada; `targetServerType=any` evita rechazar la conexión sólo por tratarse de un reader, pero no habilita las escrituras que Keycloak pueda necesitar.
+Las dos regiones corren con la **misma configuración**: clúster Aurora replicando y ECS con 1 tarea (`desired_count=1`, autoscaling `min=max=1`). La región activa sirve tráfico normalmente. La región en espera mantiene su tarea Keycloak corriendo y su OIDC regional responde; `targetServerType=any` evita rechazar la conexión sólo por tratarse de un reader, pero no habilita las escrituras que Keycloak pueda necesitar.
 
 Esta es una decisión de diseño explícita: se mantienen las dos regiones simétricas, pero la región reader no se publica ni se considera funcionalmente lista hasta la promoción. Consecuencias a decir en voz alta:
 
-- El RTO no depende sólo de la promoción de Aurora y del DNS: tras promover, ARC vuelve a estabilizar la tarea de la región destino (que ya estaba programada) y suma el arranque de Keycloak. La tarea no hay que crearla desde 0, pero sí esperar a que arranque sana contra el Aurora recién promovido.
+- El RTO no depende sólo de la promoción de Aurora y del DNS: tras promover, ARC reafirma la capacidad de la tarea de la región destino, que ya estaba corriendo. La tarea no hay que crearla desde 0; aun así hay que medir reconexiones y la primera escritura confirmada contra Aurora recién promovido.
 - Se paga cómputo ECS de **ambas** regiones todo el tiempo, más el clúster Aurora replicando y el ALB. Es más caro que un pilot light, y es el trade-off aceptado del warm standby simétrico.
 - Cada Keycloak conecta siempre al clúster Aurora de su **propia** región, nunca al de la otra: no hay ninguna carga que necesite alcanzar por PostgreSQL una VPC remota.
 
@@ -54,7 +54,7 @@ El pool renueva conexiones (`KC_DB_POOL_MAX_LIFETIME=30s`) y la caché DNS de Ja
 El plan de ARC Region switch tiene exactamente tres pasos, en orden estricto:
 
 1. Promover Aurora Global Database hacia la región destino (`AuroraGlobalDatabase`).
-2. Escalar el ECS Keycloak de la región destino de 0 a N tareas (`ECSServiceScaling`), igualando la capacidad de la región origen (`target_percent=100`). Recién acá arranca Keycloak en la región destino, con su clúster Aurora ya promovido y escribible.
+2. Reafirmar la capacidad del ECS Keycloak de la región destino (`ECSServiceScaling`, `target_percent=100`). En warm standby ya hay una tarea corriendo; este paso espera la capacidad objetivo con Aurora ya promovido y escribible.
 3. Activar el health check Route 53 del registro público para dirigir `app.<dominio>` al ALB destino (`Route53HealthCheck`).
 
 `arc_aurora_behavior` define el modo del paso 1: `switchoverOnly` para una operación planificada, `failover` cuando se acepta posible pérdida. No hay gates Lambda ni gate OIDC.
@@ -87,7 +87,7 @@ ERROR: Failed to obtain JDBC connection
 ERROR: Failed to start server in (production) mode
 ```
 
-La configuración actual corrige esa comprobación en ambas task definitions con `targetServerType=any`. Esto permite conectarse al reader, pero no convierte a Aurora en escribible ni demuestra que todas las operaciones de Keycloak funcionen en espera. Por eso los prechecks sólo exigen capacidad programada en la región reader y reservan la validación OIDC estricta para la región writer efectiva. Cuando ARC promueve Aurora, el mismo endpoint local pasa a aceptar escrituras.
+La configuración actual corrige esa comprobación en ambas task definitions con `targetServerType=any`. Esto permite conectarse al reader, pero no convierte a Aurora en escribible ni demuestra que todas las operaciones de Keycloak funcionen en espera. Por eso los prechecks exigen que ambas tareas estén corriendo y que su OIDC regional responda; aun así reservan la validación funcional de escritura para la región writer efectiva. Cuando ARC promueve Aurora, el mismo endpoint local pasa a aceptar escrituras.
 
 El paso `ECSServiceScaling` del plan sigue siendo útil: tras la promoción, reafirma la capacidad de la región destino y actúa como gate de capacidad antes de conmutar el DNS. No reemplaza una comprobación funcional de Keycloak; esa diferencia debe medirse durante el ensayo.
 

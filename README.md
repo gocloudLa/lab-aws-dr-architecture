@@ -7,8 +7,8 @@ sobre **Aurora PostgreSQL Global Database**, con conmutación orquestada por **A
 Recovery Controller (ARC) Region switch**.
 
 El patrón es **warm standby regional**: las dos regiones corren su ECS con 1 tarea y su Aurora
-replicando. La región activa sirve el tráfico; la región en espera conserva su tarea programada
-y puede conectar al reader con `targetServerType=any`, pero no se considera apta para tráfico
+replicando. La región en espera mantiene Keycloak corriendo y puede conectar al reader con
+`targetServerType=any`, pero no se considera apta para tráfico
 porque Aurora todavía no permite escrituras. Ante un DR, ARC promueve Aurora en la región
 destino, reafirma su ECS y recién entonces conmuta el DNS público.
 
