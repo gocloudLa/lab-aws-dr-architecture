@@ -7,10 +7,11 @@ Todo el ciclo (bootstrap del realm, switchover y failback) se opera con targets 
 
 - Terragrunt v1.x (usa Terraform como binario por debajo), AWS CLI v2, Docker y `jq`.
 - Una cuenta AWS con permisos sobre RDS, ECS, ECR, ELB, VPC, Route 53, IAM y ARC Region switch.
-- Una zona pública Route 53 con un dominio propio.
-- Dos certificados ACM, uno por región (`us-east-2` y `us-east-1`), que cubran `app.<dominio>`
-  y los hostnames regionales `app-use2.<dominio>` / `app-use1.<dominio>`. Un wildcard
-  `*.<dominio>` cubre los tres (es un solo label bajo el dominio).
+- Una zona pública Route 53 para `lab.democorp.cloud`.
+- Dos certificados ACM, uno por región (`us-east-2` y `us-east-1`), que cubran
+  `app.lab.democorp.cloud` y los hostnames regionales `app-use2.lab.democorp.cloud` /
+  `app-use1.lab.democorp.cloud`. El wildcard `*.lab.democorp.cloud` cubre los tres
+  (es un solo label bajo el dominio).
 - Credenciales AWS activas exportadas en la terminal antes de cada operación contra AWS.
 
 ## Orquestación por capas
@@ -44,7 +45,7 @@ región (patrón warm standby, ver [architecture.md](architecture.md)).
 
 Terragrunt v1 quedó instalado en `~/bin`; asegurate de tenerlo en el `PATH`:
 
-```bash
+```
 export PATH="$HOME/bin:$PATH"
 make tg-apply IMAGE_TAG=demo-v1
 ```
@@ -73,7 +74,7 @@ Notas de configuración de este lab, ya fijadas en el código:
 `tg-apply` ya publica una sola imagen con el mismo tag en los dos ECR. Para ejecutar únicamente
 esa etapa de forma manual se puede usar:
 
-```bash
+```
 make build-push TAG=demo-v1
 ```
 
@@ -100,13 +101,13 @@ Las credenciales del admin de Keycloak las genera la capa global y quedan como o
 sensibles. El bootstrap crea el realm `community-day` y el usuario de demo, de forma
 idempotente:
 
-```bash
+```
 GLOBAL=terragrunt/project/drarch-global/laboratory
 
-export KEYCLOAK_URL="https://app.<dominio>"
+export KEYCLOAK_URL="https://app.lab.democorp.cloud"
 export KC_BOOTSTRAP_ADMIN_USERNAME=$(cd "$GLOBAL" && terragrunt output -raw keycloak_bootstrap_admin_username)
 export KC_BOOTSTRAP_ADMIN_PASSWORD=$(cd "$GLOBAL" && terragrunt output -raw keycloak_bootstrap_admin_password)
-export DEMO_PASSWORD="<una contraseña para el usuario de demo>"
+export DEMO_PASSWORD="Demo123!"
 
 make bootstrap
 ```
@@ -117,7 +118,7 @@ se persistió en Aurora).
 
 ## 5. Preflight
 
-```bash
+```
 make preflight
 make demo-precheck
 ```
@@ -135,7 +136,7 @@ Antes de arrancar: registrar commit, tag, hora UTC, writer actual y los dos host
 regionales. Crear un usuario en Admin Console y actualizar un perfil en Account Console, o
 usar `make write-probe`, para tener un dato de control.
 
-```bash
+```
 # 1. (Opcional) Dejar un dato de control escrito contra el writer actual
 make write-probe
 
@@ -168,7 +169,7 @@ comprobación de que Keycloak ya pasó su propio health check de aplicación má
 reporta el ECS. Registrá cualquier `5xx`, fallo de login o intervalo de indisponibilidad,
 incluido el tiempo de arranque de Keycloak en la región destino.
 
-Desde un cliente limpio: resolver `app.<dominio>`, entrar, y verificar que el usuario y el
+Desde un cliente limpio: resolver `app.lab.democorp.cloud`, entrar, y verificar que el usuario y el
 perfil de control siguen ahí. La primera operación confirmada cierra el cronómetro. Comparar
 timestamps antes y después para el RPO; si no se puede medir, declararlo **no medido**.
 
@@ -198,13 +199,13 @@ que escriben también requieren `KC_BOOTSTRAP_ADMIN_USERNAME` y
 El mismo par de comandos, invirtiendo la región destino, devuelve el tráfico a la región
 original:
 
-```bash
+```
 make arc-start OPERATION=switchover TARGET_REGION=us-east-2
 make arc-poll OPERATION=switchover EXECUTION_ID=us-east-2/xxxxxxxxxxxxxxxx
 ```
 
 Validar después: el writer de Aurora volvió a la región original, su ECS corre, y
-`app.<dominio>` resuelve al ALB de esa región.
+`app.lab.democorp.cloud` resuelve al ALB de esa región.
 
 La región que queda en espera sigue en 1 tarea: el plan de ARC sólo escala la región que
 activa, no apaga la saliente. Con warm standby eso es el comportamiento esperado — la saliente
@@ -221,7 +222,7 @@ confirmar que no haya ejecuciones ARC activas. Conservar un snapshot manual si h
 retener. En este lab `deletion_protection = false` y se omite el snapshot final; revisar y
 cambiar esos valores antes de destruir si hay datos que deban conservarse.
 
-```bash
+```
 terragrunt run --all destroy --non-interactive --working-dir terragrunt
 ```
 
@@ -232,7 +233,7 @@ topología sin revisar.
 
 Sin credenciales AWS y sin crear nada:
 
-```bash
+```
 make init       # baja wrappers y providers de todas las capas
 make validate   # sintaxis de scripts, contratos estáticos y terragrunt hcl validate
 ```
