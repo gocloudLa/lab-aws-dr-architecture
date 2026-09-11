@@ -37,4 +37,16 @@ locals {
     local.common_name_prefix,
     local.metadata.key.project
   ])
+
+  # Región del clúster secundario del Global Database. La capa global crea una clave KMS en
+  # cada región, así que necesita conocer ambas: aws_region (Ohio) es la primaria.
+  secondary_region = "us-east-1"
+
+  # Nombre de la clave/alias por región. Coincide con aurora_cluster_name de cada capa
+  # regional (dmc-lab-drarch-use2 / dmc-lab-drarch-use1) para que sea trazable de un lado a
+  # otro sin adivinar.
+  kms_key_name = {
+    (local.metadata.key.region) = "${local.common_name}-use2"
+    secondary                   = "${local.common_name}-use1"
+  }
 }

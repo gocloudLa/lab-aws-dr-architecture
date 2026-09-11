@@ -49,3 +49,15 @@ output "common_name" {
   description = "Naming derivado de metadata, para que las capas superiores no lo recalculen."
   value       = local.common_name
 }
+output "aurora_kms_key_arn_primary" {
+  description = "ARN de la clave KMS de la región primaria (Ohio); la capa regional la pasa a Aurora."
+  value       = aws_kms_key.primary.arn
+}
+output "aurora_kms_key_arn_secondary" {
+  description = "ARN de la clave KMS de la región secundaria (Virginia); exigida por la réplica cifrada cross-region."
+  value       = aws_kms_key.secondary.arn
+}
+output "secret_suffix" {
+  description = "Sufijo aleatorio para el nombre del secreto de Aurora, compartido por ambas regiones (los nombres de clúster ya difieren)."
+  value       = random_id.secret_suffix.hex
+}

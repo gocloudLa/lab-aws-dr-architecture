@@ -52,7 +52,9 @@ inputs = {
   keycloak_bootstrap_admin_username = dependency.global.outputs.keycloak_bootstrap_admin_username
   keycloak_bootstrap_admin_password = dependency.global.outputs.keycloak_bootstrap_admin_password
 
-  container_image_tag = "bootstrap-required"
+  # Misma imagen que Ohio (digest idéntico): la task definition debe apuntar a la imagen real
+  # para que ARC pueda escalar el servicio durante el switchover sin recrear nada.
+  container_image_tag = "demo-v1"
 
   # Pilot light: la región en espera arranca siempre en 0 tareas. Su clúster Aurora es
   # réplica de sólo lectura, así que Keycloak no podría completar su migración de escritura.

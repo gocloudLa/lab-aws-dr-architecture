@@ -10,11 +10,13 @@ dependency "global" {
 
   mock_outputs_allowed_terraform_commands = ["validate", "plan"]
   mock_outputs = {
-    global_cluster_identifier = "mock-global"
-    aurora_engine_version     = "16.14"
-    database_name             = "keycloak"
-    database_admin_username   = "keycloak_admin"
-    database_password         = "mock-password"
+    global_cluster_identifier  = "mock-global"
+    aurora_engine_version      = "16.14"
+    database_name              = "keycloak"
+    database_admin_username    = "keycloak_admin"
+    database_password          = "mock-password"
+    aurora_kms_key_arn_primary = "arn:aws:kms:us-east-2:000000000000:key/mock"
+    secret_suffix              = "mock01"
   }
 }
 
@@ -24,6 +26,12 @@ inputs = {
   database_name             = dependency.global.outputs.database_name
   database_admin_username   = dependency.global.outputs.database_admin_username
   database_password         = dependency.global.outputs.database_password
+
+  # Clave KMS de esta región (Ohio), creada en la capa global.
+  aurora_kms_key_arn = dependency.global.outputs.aurora_kms_key_arn_primary
+
+  # Sufijo del nombre del secreto de Aurora, generado en la capa global.
+  secret_suffix = dependency.global.outputs.secret_suffix
 
   # Ohio arranca como writer del Global Database.
   is_primary_cluster = true

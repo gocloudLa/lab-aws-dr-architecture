@@ -22,11 +22,20 @@ module "ecs_service" {
       subnet_name      = var.app_subnet_name
 
       # Las tareas viven en subredes privadas y salen por NAT: no reciben IP pública.
-      assign_public_ip       = false
-      launch_type            = "FARGATE"
-      desired_count          = var.ecs_desired_count
-      enable_autoscaling     = false
-      enable_execute_command = true
+      assign_public_ip = false
+      launch_type      = "FARGATE"
+
+      # El módulo base de ECS mantiene desired_count en ignore_changes (asume que la escala
+      # se gobierna por autoscaling), así que un desired_count por Terraform no se aplica tras
+      # la creación. Por eso la escala se maneja con un scalable target de Application Auto
+      # Scaling: min=max fija el número de tareas y es lo que ARC ajusta en el switchover.
+      # desired_count sólo siembra el valor inicial del target (min = min(min_capacity,
+      # desired_count)); tiene que ser >= autoscaling_min_capacity o el piso caería a 0.
+      desired_count            = var.ecs_desired_count
+      enable_autoscaling       = true
+      autoscaling_min_capacity = var.ecs_desired_count
+      autoscaling_max_capacity = var.ecs_desired_count
+      enable_execute_command   = true
       cpu                    = 1024
       memory                 = 2048
 

@@ -15,6 +15,20 @@ resource "random_password" "keycloak_admin" {
   special = true
 }
 
+# Sufijo aleatorio para el nombre del secreto de Aurora de cada región. Secrets Manager
+# retiene un secreto borrado en una ventana de recuperación y rechaza recrear otro con el
+# mismo nombre mientras dure; el sufijo evita esa colisión tras un destroy+apply del lab.
+# Se genera acá (capa global, la primera del DAG) para que llegue a las capas regionales
+# como string concreto: si se generara junto a Aurora, su valor unknown en plan contaminaría
+# el for_each/count interno del wrapper y rompería el plan.
+resource "random_id" "secret_suffix" {
+  byte_length = 3
+
+  keepers = {
+    global_cluster = aws_rds_global_cluster.this.id
+  }
+}
+
 /*----------------------------------------------------------------------*/
 /* Aurora Global Database                                               */
 /*----------------------------------------------------------------------*/

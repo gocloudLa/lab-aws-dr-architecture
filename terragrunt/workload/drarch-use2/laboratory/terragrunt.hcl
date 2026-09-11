@@ -58,7 +58,10 @@ inputs = {
   keycloak_bootstrap_admin_username = dependency.global.outputs.keycloak_bootstrap_admin_username
   keycloak_bootstrap_admin_password = dependency.global.outputs.keycloak_bootstrap_admin_password
 
-  # Bootstrap: aplicar con 0, publicar la imagen en ambos ECR y recién entonces subir a 1.
-  container_image_tag = "bootstrap-required"
-  ecs_desired_count   = 0
+  # Imagen publicada en ambos ECR con digest idéntico (make build-push TAG=demo-v1).
+  container_image_tag = "demo-v1"
+
+  # Ohio es la región primaria del patrón pilot-light: corre 1 tarea. Virginia queda en 0 y
+  # ARC la escala durante el switchover, después de promover Aurora.
+  ecs_desired_count = 1
 }

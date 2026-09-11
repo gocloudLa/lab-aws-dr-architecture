@@ -8,6 +8,16 @@ variable "aurora_engine_version" {
   type        = string
 }
 
+variable "aurora_kms_key_arn" {
+  description = "ARN de la clave KMS regional para cifrar el clúster. La crea la capa global; el Global Database exige una clave explícita y válida en cada región."
+  type        = string
+}
+
+variable "secret_suffix" {
+  description = "Sufijo aleatorio del nombre del secreto de Aurora. Se genera en la capa global (valor concreto) para no colisionar con un secreto en ventana de borrado tras un destroy+apply."
+  type        = string
+}
+
 variable "aurora_instance_class" {
   description = "Clase de instancia provisioned. Aurora Global Database no admite burstable (db.t3/db.t4g)."
   type        = string

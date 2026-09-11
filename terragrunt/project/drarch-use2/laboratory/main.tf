@@ -76,7 +76,10 @@ module "aurora" {
         }
       }
 
+      # Clave regional explícita: el Global Database la exige en cada región. La crea la capa
+      # global y llega como input concreto, no como un valor unknown que rompería el plan.
       storage_encrypted       = true
+      kms_key_id              = var.aurora_kms_key_arn
       apply_immediately       = true
       backup_retention_period = var.is_primary_cluster ? 7 : 1
       deletion_protection     = var.deletion_protection
@@ -89,6 +92,14 @@ module "aurora" {
         cidr_blocks = join(",", local.app_cidr_blocks)
         description = "PostgreSQL desde las subredes de aplicacion de esta region"
       }]
+
+      # Nombre con sufijo aleatorio para no colisionar con un secreto en ventana de borrado, y
+      # recovery_window_in_days=0 para que el destroy del lab lo elimine de inmediato sin
+      # dejar un huérfano que bloquee el próximo apply.
+      secret = {
+        name                    = "rds-${local.aurora_cluster_name}-${var.secret_suffix}"
+        recovery_window_in_days = 0
+      }
     }
   }
 }

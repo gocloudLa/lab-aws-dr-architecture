@@ -22,11 +22,19 @@ module "ecs_service" {
       subnet_name      = var.app_subnet_name
 
       # Las tareas viven en subredes privadas y salen por NAT: no reciben IP pública.
-      assign_public_ip       = false
-      launch_type            = "FARGATE"
-      desired_count          = var.ecs_desired_count
-      enable_autoscaling     = false
-      enable_execute_command = true
+      assign_public_ip = false
+      launch_type      = "FARGATE"
+
+      # Igual que Ohio, la escala se maneja por Application Auto Scaling porque el módulo base
+      # ignora desired_count. Virginia arranca en 0 (piso 0) y ARC la sube durante el
+      # switchover ajustando este scalable target hasta el desired count de la región origen.
+      # El techo permite que ARC pueda escalar a 1 tarea (target_percent=100 del paso
+      # ECSServiceScaling); el piso 0 la mantiene apagada en operación normal.
+      desired_count            = var.ecs_desired_count
+      enable_autoscaling       = true
+      autoscaling_min_capacity = 0
+      autoscaling_max_capacity = 1
+      enable_execute_command   = true
       cpu                    = 1024
       memory                 = 2048
 
