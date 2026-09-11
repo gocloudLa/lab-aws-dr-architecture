@@ -67,13 +67,62 @@ resource "aws_iam_role_policy" "arc" {
         Effect   = "Allow"
         Action   = ["route53:ListResourceRecordSets"]
         Resource = "arn:${data.aws_partition.current.partition}:route53:::hostedzone/${var.public_zone_id}"
+      },
+      # Escalar el ECS de la región destino de 0 a N tareas, acotado a los dos servicios y
+      # clústeres de esta demo. Política tomada de la muestra oficial del execution block
+      # ECS service scaling (docs.aws.amazon.com/r53recovery/.../security_iam_region_switch_ecs.html).
+      {
+        Sid    = "EscalarSoloLosServiciosDeEstaDemo"
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeServices",
+          "ecs:UpdateService"
+        ]
+        Resource = [
+          module.primary.ecs_service_arn,
+          module.secondary.ecs_service_arn
+        ]
+      },
+      {
+        Sid    = "DescribirClustersDeEstaDemo"
+        Effect = "Allow"
+        Action = ["ecs:DescribeClusters"]
+        Resource = [
+          module.primary.ecs_cluster_arn,
+          module.secondary.ecs_cluster_arn
+        ]
+      },
+      # ecs:ListServices y las de Application Auto Scaling no admiten scoping por recurso.
+      {
+        Sid      = "ListarServiciosEcs"
+        Effect   = "Allow"
+        Action   = ["ecs:ListServices"]
+        Resource = "*"
+      },
+      {
+        Sid    = "LeerCapacidadDeAutoscaling"
+        Effect = "Allow"
+        Action = [
+          "application-autoscaling:DescribeScalableTargets",
+          "application-autoscaling:RegisterScalableTarget"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "LeerMetricaDeTareasCorriendo"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
+        Resource = "*"
       }
     ]
   })
 }
 
-# El plan tiene exactamente dos pasos y ningún gate posterior a la promoción: primero
-# Aurora cambia de writer y después DNS publica el ALB de la región destino.
+# El plan tiene exactamente tres pasos, en orden estricto: primero Aurora cambia de
+# writer, después el ECS de la región destino escala de 0 a N tareas (pilot light: recién
+# ahí Keycloak arranca y corre sus migraciones de escritura, con el clúster local ya
+# promovido) y por último DNS publica el ALB de la región destino. No hay gate posterior
+# a la promoción de Aurora más allá de esperar a que el ECS quede con capacidad.
 resource "aws_arcregionswitch_plan" "this" {
   provider = aws.primary
 
@@ -103,6 +152,33 @@ resource "aws_arcregionswitch_plan" "this" {
           global_cluster_identifier = aws_rds_global_cluster.this.id
           timeout_minutes           = 20
           ungraceful { ungraceful = "failover" }
+        }
+      }
+
+      # Pilot light: escala el ECS de la región que este workflow activa, de 0 a N tareas,
+      # sólo después de que su clúster Aurora ya es writer. capacity_monitoring_approach
+      # usa el desired count real del servicio origen (sin costo adicional de Container
+      # Insights); target_percent=100 pide igualar esa capacidad en el destino.
+      step {
+        name                 = "scale-up-keycloak"
+        execution_block_type = "ECSServiceScaling"
+
+        ecs_capacity_increase_config {
+          capacity_monitoring_approach = "sampledMaxInLast24Hours"
+          target_percent               = 100
+          timeout_minutes              = 10
+
+          service {
+            cluster_arn = module.primary.ecs_cluster_arn
+            service_arn = module.primary.ecs_service_arn
+          }
+
+          service {
+            cluster_arn = module.secondary.ecs_cluster_arn
+            service_arn = module.secondary.ecs_service_arn
+          }
+
+          ungraceful { minimum_success_percentage = 0 }
         }
       }
 

@@ -44,12 +44,7 @@ variable "default_security_group_name" {
 }
 
 variable "app_cidr_blocks" {
-  description = "CIDR de las subredes de aplicación locales, habilitados hacia PostgreSQL."
-  type        = list(string)
-}
-
-variable "peer_app_cidr_blocks" {
-  description = "CIDR de las subredes de aplicación de la otra región: permiten que el ECS remoto alcance al writer actual por peering."
+  description = "CIDR de las subredes de aplicación locales, habilitados hacia PostgreSQL. Cada región sólo permite su propio tráfico: no hace falta peering porque ningún Keycloak cruza de región."
   type        = list(string)
 }
 
@@ -109,24 +104,14 @@ variable "aurora_engine_version" {
   type        = string
 }
 
-variable "serverless_min_acu" {
-  description = "Capacidad mínima Serverless v2 en esta región."
-  type        = number
-}
-
-variable "serverless_max_acu" {
-  description = "Capacidad máxima Serverless v2 en esta región."
-  type        = number
+variable "aurora_instance_class" {
+  description = "Clase de instancia provisioned del clúster Aurora en esta región. Aurora Global Database no admite clases burstable (db.t3/db.t4g); la memory-optimized más chica suele ser db.r6g.large o db.r5.large, según disponibilidad regional."
+  type        = string
 }
 
 variable "deletion_protection" {
   description = "Protección contra borrado del clúster Aurora y del repositorio ECR."
   type        = bool
-}
-
-variable "global_writer_endpoint" {
-  description = "Global Writer Endpoint de Aurora. Es el único DB_HOST que recibe Keycloak en las dos regiones."
-  type        = string
 }
 
 variable "container_image_tag" {

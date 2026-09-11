@@ -82,28 +82,22 @@ variable "database_admin_username" {
 variable "aurora_engine_version" {
   description = "Versión Aurora PostgreSQL disponible en ambas regiones; confirmar con el preflight antes de apply."
   type        = string
-  default     = "16.6"
+  default     = "16.14"
 }
 
-variable "serverless_min_acu" {
-  description = "Capacidad mínima Serverless v2 por región. AWS recomienda 8 ACU para el primario global."
-  type        = number
-  default     = 8
+variable "aurora_instance_class" {
+  description = <<-EOT
+    Clase de instancia provisioned del clúster Aurora, simétrica en ambas regiones.
+    Aurora Global Database no admite clases burstable (db.t3/db.t4g); usar una
+    memory-optimized (familia db.r*), confirmando disponibilidad en ambas regiones con
+    aws rds describe-orderable-db-instance-options antes de aplicar.
+  EOT
+  type        = string
+  default     = "db.r6g.large"
 
   validation {
-    condition     = var.serverless_min_acu >= 0.5
-    error_message = "serverless_min_acu debe ser al menos 0.5. Valores menores a 8 son un compromiso de laboratorio."
-  }
-}
-
-variable "serverless_max_acu" {
-  description = "Capacidad máxima Serverless v2 simétrica en ambas regiones."
-  type        = number
-  default     = 16
-
-  validation {
-    condition     = var.serverless_max_acu >= 8 && var.serverless_max_acu >= var.serverless_min_acu
-    error_message = "serverless_max_acu debe ser al menos 8 y no menor que serverless_min_acu."
+    condition     = !contains(["t3", "t4g"], split(".", var.aurora_instance_class)[1])
+    error_message = "aurora_instance_class no puede ser una clase burstable (db.t3/db.t4g): Aurora Global Database no las admite."
   }
 }
 
@@ -114,7 +108,12 @@ variable "container_image_tag" {
 }
 
 variable "ecs_desired_count" {
-  description = "Cantidad simétrica de tareas Keycloak por región: 0 durante bootstrap y al menos 1 después de publicar la imagen."
+  description = <<-EOT
+    Tareas Keycloak en la región primaria: 0 durante bootstrap y al menos 1 después de
+    publicar la imagen. La región secundaria es pilot light y siempre arranca en 0; el
+    plan de ARC la escala durante la conmutación (ver arc.tf), después de promover Aurora
+    y antes de mover el DNS.
+  EOT
   type        = number
   default     = 0
 

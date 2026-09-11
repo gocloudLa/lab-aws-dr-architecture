@@ -2,6 +2,16 @@ data "aws_caller_identity" "current" {}
 
 data "aws_partition" "current" {}
 
+# Endpoint del clúster Aurora *local* a esta región, no el Global Writer Endpoint. Cada
+# Keycloak lee y escribe siempre contra su propio clúster: el primario porque es el writer,
+# y el secundario porque ARC lo promueve antes de escalar el ECS de esa región (ver arc.tf).
+# Así ninguna carga necesita cruzar de región por PostgreSQL y no hace falta peering.
+data "aws_rds_cluster" "this" {
+  cluster_identifier = local.aurora_cluster_name
+
+  depends_on = [module.aurora]
+}
+
 locals {
   # Los wrappers de la capa de workload derivan este nombre de metadata.key; se recalcula
   # acá porque ninguno de ellos expone outputs con los nombres que generan.
@@ -39,7 +49,9 @@ locals {
   # Formato del ARN: arn:...:listener/app/<nombre-alb>/<id-alb>/<id-listener>
   alb_name = split("/", module.alb.alb[var.region_key].listeners[local.alb_listener_key].arn)[2]
 
-  # Aurora acepta PostgreSQL desde las subredes de aplicación de las dos regiones: durante
-  # una conmutación el ECS remoto sigue escribiendo contra el writer vigente por peering.
-  database_ingress_cidrs = join(",", concat(var.app_cidr_blocks, var.peer_app_cidr_blocks))
+  # Aurora sólo acepta PostgreSQL desde las subredes de aplicación de su propia región:
+  # cada Keycloak conecta siempre al clúster local (ver data.aws_rds_cluster.this en
+  # locals.tf), nunca cruza a la otra región, así que no hace falta abrir el CIDR remoto
+  # ni depender de peering entre las VPC.
+  database_ingress_cidrs = join(",", var.app_cidr_blocks)
 }

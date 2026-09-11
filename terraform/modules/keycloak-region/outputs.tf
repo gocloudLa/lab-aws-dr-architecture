@@ -29,3 +29,15 @@ output "ecs_service_name" {
   description = "Servicio ECS de Keycloak en esta región."
   value       = local.ecs_service_name
 }
+
+# ARNs que consume el step ecs_capacity_increase_config del plan de ARC (arc.tf): ninguno
+# de los dos wrappers los publica, así que se componen igual que aurora_cluster_arn.
+output "ecs_cluster_arn" {
+  description = "ARN del clúster ECS regional."
+  value       = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${local.ecs_cluster_name}"
+}
+
+output "ecs_service_arn" {
+  description = "ARN del servicio ECS de Keycloak en esta región."
+  value       = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${local.ecs_cluster_name}/${local.ecs_service_name}"
+}

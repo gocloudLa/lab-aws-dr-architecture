@@ -24,8 +24,10 @@ module "dr_architecture" {
   certificate_arn_primary   = var.certificate_arn_primary
   certificate_arn_secondary = var.certificate_arn_secondary
 
-  container_image_tag = var.container_image_tag
-  ecs_desired_count   = var.ecs_desired_count
-  arc_aurora_behavior = var.arc_aurora_behavior
-  deletion_protection = var.deletion_protection
+  aurora_engine_version = var.aurora_engine_version
+  aurora_instance_class = var.aurora_instance_class
+  container_image_tag   = var.container_image_tag
+  ecs_desired_count     = var.ecs_desired_count
+  arc_aurora_behavior   = var.arc_aurora_behavior
+  deletion_protection   = var.deletion_protection
 }

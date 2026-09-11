@@ -6,9 +6,15 @@ public_domain_name = "demo.example.com"
 certificate_arn_primary   = "arn:aws:acm:us-east-2:123456789012:certificate/00000000-0000-0000-0000-000000000000"
 certificate_arn_secondary = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-1111-1111-1111-111111111111"
 
+# Confirmar disponibilidad en ambas regiones antes de aplicar (aws rds
+# describe-db-engine-versions / describe-orderable-db-instance-options). Aurora Global
+# Database no admite clases burstable (db.t3/db.t4g).
+# aurora_engine_version = "16.14"
+# aurora_instance_class = "db.r6g.large"
+
 # Red existente en cada región. Los patrones se resuelven por tag Name y admiten comodín.
-# app_cidr_blocks alimenta el ingress PostgreSQL de Aurora en la región opuesta, así que
-# debe listar los CIDR reales de las subredes donde corren las tareas ECS.
+# app_cidr_blocks sólo alimenta el ingress PostgreSQL de Aurora en su propia región:
+# patrón pilot light, no hace falta peering ni el CIDR de la otra región.
 primary_network = {
   vpc_name                    = "gcl-lab"
   app_subnet_name             = "gcl-lab-private*"

@@ -65,3 +65,16 @@ output "arc_aurora_behavior" {
   description = "Modo configurado del bloque Aurora del plan."
   value       = var.arc_aurora_behavior
 }
+
+# Consumidos por scripts/preflight.sh para confirmar que la versión y la clase de
+# instancia configuradas en Terraform siguen siendo válidas en ambas regiones antes del
+# ensayo.
+output "aurora_engine_version" {
+  description = "Versión Aurora PostgreSQL aplicada a los dos clústeres regionales."
+  value       = var.aurora_engine_version
+}
+
+output "aurora_instance_class" {
+  description = "Clase de instancia provisioned del clúster Aurora, igual en ambas regiones."
+  value       = var.aurora_instance_class
+}

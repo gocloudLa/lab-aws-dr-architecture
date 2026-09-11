@@ -44,6 +44,10 @@ module "aurora" {
 
   rds_aurora_parameters = {
     (var.region_key) = {
+      # El wrapper resuelve VPC y security group por tag; sin vpc_name explícito cae al
+      # default derivado de metadata (company-env), que no coincide con una VPC ya
+      # existente con otro nombre, como la de este laboratorio.
+      vpc_name       = var.vpc_name
       engine         = "aurora-postgresql"
       engine_version = var.aurora_engine_version
       port           = 5432
@@ -62,18 +66,16 @@ module "aurora" {
       cluster_parameter_group_family = local.aurora_parameter_group
       db_parameter_group_family      = local.aurora_parameter_group
 
-      # Serverless v2 se configura con engine_mode provisioned más una instancia
-      # db.serverless; engine_mode "serverless" es Aurora Serverless v1.
+      # Instancia provisioned, no Serverless v2: Aurora Global Database no admite clases
+      # burstable (db.t3/db.t4g) como instancia de un clúster miembro, así que la más
+      # chica válida es una memory-optimized; instance_class llega desde la variable de
+      # laboratorio, no hardcodeada, para poder ajustarla sin tocar el módulo.
       instances = {
         1 = {
-          instance_class      = "db.serverless"
+          instance_class      = var.aurora_instance_class
           promotion_tier      = 0
           publicly_accessible = false
         }
-      }
-      serverlessv2_scaling_configuration = {
-        min_capacity = var.serverless_min_acu
-        max_capacity = var.serverless_max_acu
       }
 
       storage_encrypted       = true
@@ -103,6 +105,9 @@ module "alb" {
 
   alb_parameters = {
     (var.region_key) = {
+      # Mismo motivo que en el bloque de Aurora: sin vpc_name explícito el wrapper cae a
+      # su default derivado de metadata, que no coincide con una VPC ya existente.
+      vpc_name = var.vpc_name
       internal = false
       subnets  = var.public_subnet_ids
 
@@ -145,7 +150,9 @@ module "alb" {
         {
           rule        = "http-80-tcp"
           cidr_blocks = "0.0.0.0/0"
-          description = "HTTP desde internet, sólo para redirigir a HTTPS"
+          # Sin tildes ni signos fuera de [0-9A-Za-z_ .:/()#,@[]+=&;{}!$*-]: AWS rechaza la
+          # descripción de la regla del security group si no matchea esa regex.
+          description = "HTTP desde internet, solo para redirigir a HTTPS"
         }
       ]
 
@@ -222,9 +229,12 @@ module "ecs_service" {
           map_environment = {
             AWS_REGION = var.aws_region
 
-            # Único DB_HOST en las dos regiones: Aurora reapunta este hostname al writer
-            # vigente después de una promoción, sin intervención de Terraform ni DNS propio.
-            DB_HOST = var.global_writer_endpoint
+            # Endpoint del clúster Aurora local a esta región (no el Global Writer
+            # Endpoint compartido): cada Keycloak conecta siempre a su propio clúster, así
+            # ninguna carga necesita alcanzar la otra región por PostgreSQL. Cuando ARC
+            # promueve este clúster, el mismo hostname empieza a aceptar escrituras sin
+            # que Keycloak deba reconectar a otro DB_HOST.
+            DB_HOST = data.aws_rds_cluster.this.endpoint
             DB_PORT = "5432"
             DB_NAME = var.database_name
 

@@ -11,7 +11,14 @@ certificate_arn_secondary = "arn:aws:acm:us-east-1:123456789012:certificate/1111
 primary_vpc_cidr   = "10.20.0.0/16"
 secondary_vpc_cidr = "10.30.0.0/16"
 
-# Bootstrap: aplicar con 0, publicar la imagen en ambos ECR y recién entonces subir a 1.
+# Confirmar disponibilidad en ambas regiones antes de aplicar (aws rds
+# describe-db-engine-versions / describe-orderable-db-instance-options). Aurora Global
+# Database no admite clases burstable (db.t3/db.t4g).
+# aurora_engine_version = "16.14"
+# aurora_instance_class = "db.r6g.large"
+
+# Bootstrap: aplicar con 0, publicar la imagen en ambos ECR y recién entonces subir a 1
+# en la región primaria. La secundaria es pilot light y siempre arranca en 0.
 container_image_tag = "bootstrap-required"
 ecs_desired_count   = 0
 

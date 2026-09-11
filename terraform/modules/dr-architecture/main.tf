@@ -51,7 +51,6 @@ module "primary" {
   database_subnet_ids         = var.primary_network.database_subnet_ids
   default_security_group_name = var.primary_network.default_security_group_name
   app_cidr_blocks             = var.primary_network.app_cidr_blocks
-  peer_app_cidr_blocks        = var.secondary_network.app_cidr_blocks
 
   certificate_arn      = var.certificate_arn_primary
   public_domain_name   = var.public_domain_name
@@ -61,16 +60,15 @@ module "primary" {
 
   global_cluster_identifier = aws_rds_global_cluster.this.id
   is_primary                = true
-  global_writer_endpoint    = aws_rds_global_cluster.this.endpoint
 
   database_name           = var.database_name
   database_admin_username = var.database_admin_username
   database_password       = random_password.database.result
   aurora_engine_version   = var.aurora_engine_version
-  serverless_min_acu      = var.serverless_min_acu
-  serverless_max_acu      = var.serverless_max_acu
+  aurora_instance_class   = var.aurora_instance_class
   deletion_protection     = var.deletion_protection
 
+  # La región primaria arranca con tráfico real: su ECS respeta ecs_desired_count.
   container_image_tag               = var.container_image_tag
   ecs_desired_count                 = var.ecs_desired_count
   keycloak_bootstrap_admin_username = var.keycloak_bootstrap_admin_username
@@ -93,7 +91,6 @@ module "secondary" {
   database_subnet_ids         = var.secondary_network.database_subnet_ids
   default_security_group_name = var.secondary_network.default_security_group_name
   app_cidr_blocks             = var.secondary_network.app_cidr_blocks
-  peer_app_cidr_blocks        = var.primary_network.app_cidr_blocks
 
   certificate_arn      = var.certificate_arn_secondary
   public_domain_name   = var.public_domain_name
@@ -103,18 +100,20 @@ module "secondary" {
 
   global_cluster_identifier = aws_rds_global_cluster.this.id
   is_primary                = false
-  global_writer_endpoint    = aws_rds_global_cluster.this.endpoint
 
   database_name           = var.database_name
   database_admin_username = var.database_admin_username
   database_password       = random_password.database.result
   aurora_engine_version   = var.aurora_engine_version
-  serverless_min_acu      = var.serverless_min_acu
-  serverless_max_acu      = var.serverless_max_acu
+  aurora_instance_class   = var.aurora_instance_class
   deletion_protection     = var.deletion_protection
 
+  # Pilot light: la región secundaria arranca siempre en 0 tareas. Mientras su clúster
+  # Aurora es réplica de sólo lectura, Keycloak no podría iniciar (correría migraciones de
+  # escritura contra su propio DB_HOST). El plan de ARC la escala después de promover
+  # Aurora y antes de mover el DNS (ver el step ecs-capacity-increase en arc.tf).
   container_image_tag               = var.container_image_tag
-  ecs_desired_count                 = var.ecs_desired_count
+  ecs_desired_count                 = 0
   keycloak_bootstrap_admin_username = var.keycloak_bootstrap_admin_username
   keycloak_bootstrap_admin_password = random_password.keycloak_admin.result
 

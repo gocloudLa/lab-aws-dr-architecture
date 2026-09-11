@@ -54,6 +54,18 @@ variable "certificate_arn_secondary" {
   type        = string
 }
 
+variable "aurora_engine_version" {
+  description = "Versión Aurora PostgreSQL disponible en ambas regiones; confirmar con el preflight antes de apply."
+  type        = string
+  default     = "16.14"
+}
+
+variable "aurora_instance_class" {
+  description = "Clase de instancia provisioned del clúster Aurora, simétrica en ambas regiones. No puede ser burstable (db.t3/db.t4g); confirmar disponibilidad regional antes de apply."
+  type        = string
+  default     = "db.r6g.large"
+}
+
 variable "container_image_tag" {
   description = "Etiqueta inmutable publicada en ambos ECR antes de habilitar los servicios."
   type        = string
@@ -61,7 +73,7 @@ variable "container_image_tag" {
 }
 
 variable "ecs_desired_count" {
-  description = "Tareas Keycloak por región: 0 durante el bootstrap y 1 con la demo habilitada."
+  description = "Tareas Keycloak en la región primaria: 0 durante el bootstrap y 1 con la demo habilitada. La secundaria es pilot light y siempre arranca en 0."
   type        = number
   default     = 0
 }

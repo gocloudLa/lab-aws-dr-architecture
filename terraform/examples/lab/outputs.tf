@@ -46,6 +46,16 @@ output "global_cluster_identifier" {
 }
 
 output "global_writer_endpoint" {
-  description = "Hostname estable que Aurora reapunta al clúster writer vigente."
+  description = "Hostname del Aurora Global Database. Sólo diagnóstico: cada Keycloak usa el endpoint de su propio clúster regional, no este valor."
   value       = module.dr_architecture.global_writer_endpoint
+}
+
+output "aurora_engine_version" {
+  description = "Versión Aurora PostgreSQL aplicada a los dos clústeres regionales."
+  value       = module.dr_architecture.aurora_engine_version
+}
+
+output "aurora_instance_class" {
+  description = "Clase de instancia provisioned del clúster Aurora, igual en ambas regiones."
+  value       = module.dr_architecture.aurora_instance_class
 }
