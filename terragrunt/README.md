@@ -66,12 +66,21 @@ solamente `project`: los servicios ECS se crean o actualizan en la etapa `worklo
 
 ## Convenciones heredadas de la Standard Platform
 
+> **Alcance de la cuenta laboratorio.** Estos valores son supuestos de entrada, no recursos
+> creados por este stack. En otra cuenta se debe crear primero la red base, la zona Route 53 y
+> los certificados ACM regionales; luego ajustar `metadata.tf` y, si cambia el tagging, los
+> data sources de cada capa regional.
+
 - `metadata.key.company = "dmc"` y `env = "lab"` hacen que `common_name_prefix` sea `dmc-lab`,
   que es el tag `Name` real de la VPC. Así los wrappers aciertan con sus defaults y no hay
   que pasarles `vpc_name`.
+- Las subredes preexistentes se buscan por los tags `dmc-lab-public*`, `dmc-lab-private*` y
+  `dmc-lab-db*`. Se requieren al menos dos públicas y dos de base de datos, y una privada con
+  salida por NAT. Las dos VPC deben usar CIDR no superpuestos.
 - `common_name` es `dmc-lab-drarch`; los recursos regionales se sufijan con `use2` / `use1`.
 - `conditions.tf` deriva `zone_public` del entorno: para `lab` es `lab.democorp.cloud`.
-- El certificado ACM se resuelve por data source sobre esa zona, en cada región.
+- El certificado ACM público se resuelve por data source sobre esa zona, en cada región; debe
+  existir previamente y cubrir los hostnames de la demo.
 
 ## Hostnames
 

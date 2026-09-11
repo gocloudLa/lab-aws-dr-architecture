@@ -116,9 +116,12 @@ existen todavía, así que un único state no puede expandir el grafo y el plan 
 `Invalid for_each argument`. Separado en capas, cada una planifica cuando lo de abajo ya
 existe. Detalle y DAG en [terragrunt/README.md](../terragrunt/README.md).
 
-La red (VPC, subredes, NAT) se asume preexistente y se resuelve por tag `Name`. No hace falta
-peering ni conectividad interregional: cada Keycloak conecta al clúster Aurora de su propia
-región.
+La red (VPC, subredes, NAT), la zona Route 53 y los certificados ACM regionales se asumen
+preexistentes y se resuelven por tags/data sources. En la cuenta laboratorio los nombres vienen
+de `metadata` (`dmc-lab`, `lab.democorp.cloud` y sus subredes `public*`, `private*`, `db*`).
+Para reutilizar la demo en otra cuenta hay que crear esa base y adaptar `metadata.tf` y los data
+sources al dominio y tagging propios; Terraform no la aprovisiona. No hace falta peering ni
+conectividad interregional: cada Keycloak conecta al clúster Aurora de su propia región.
 
 Todo se compone con los wrappers de la [Standard Platform de gocloudLa](https://github.com/gocloudLa): `wrapper-rds-aurora`, `wrapper-alb`, `wrapper-ecs`, `wrapper-ecs-service` y `wrapper-ecr`. No se mezclan orígenes de módulos.
 

@@ -14,6 +14,30 @@ Todo el ciclo (bootstrap del realm, switchover y failback) se opera con targets 
   (es un solo label bajo el dominio).
 - Credenciales AWS activas exportadas en la terminal antes de cada operación contra AWS.
 
+### Supuestos de la cuenta laboratorio
+
+Esta guía está configurada para la cuenta de laboratorio. Terragrunt completa valores mediante
+`metadata` y data sources; no los crea: busca, en cada región, la VPC cuyo tag `Name` es
+`dmc-lab`, subredes `dmc-lab-public*`, `dmc-lab-private*` y `dmc-lab-db*`, la zona pública
+`lab.democorp.cloud` y un certificado ACM público emitido para esa zona. Los nombres
+`app.lab.democorp.cloud`, `app-use2.lab.democorp.cloud` y `app-use1.lab.democorp.cloud` salen
+de esos valores.
+
+Para levantar la misma demo en otra cuenta, antes de ejecutar `make tg-apply` hay que crear o
+adaptar en el código:
+
+- Una VPC por región (`us-east-2` y `us-east-1`), con CIDR no superpuestos, al menos dos
+  subredes públicas y dos de base de datos, una o más subredes privadas con salida por NAT, y
+  un security group por defecto etiquetado como espera la Standard Platform.
+- La zona pública Route 53 propia y certificados ACM **emitidos en cada región**, que cubran el
+  hostname público y los regionales del dominio elegido.
+- `metadata.tf` y, si cambia el convenio de tags, los data sources: compañía/entorno, dominio,
+  regiones y los nombres de VPC/subredes. El valor fijo `dmc-lab` no se debe reutilizar salvo
+  que la red nueva tenga exactamente ese tagging.
+
+Después de esos prerrequisitos, el stack sí crea ECR, Aurora Global Database, ALB, ECS,
+servicios Keycloak, ARC, roles IAM y registros Route 53 de la demo.
+
 ## Orquestación por capas
 
 El stack se separa en **seis capas** bajo `terragrunt/`, siguiendo la convención

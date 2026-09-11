@@ -84,8 +84,10 @@ actualiza la task definition de ECS; el despliegue completo lo hace `tg-apply`.
 ## Prerrequisitos
 
 - Terragrunt v1.x, AWS CLI v2, Docker y `jq`.
-- Una red AWS preexistente (VPC, subredes públicas/privadas/de base de datos y NAT) en ambas
-  regiones, resuelta por tag `Name`.
-- Una zona pública Route 53 con un certificado ACM que cubra `app.<dominio>` y los hostnames
-  regionales, en cada región.
+- La cuenta laboratorio ya aporta la red y certificados que el código descubre por data source:
+  VPC `dmc-lab`, subredes `dmc-lab-public*`, `dmc-lab-private*`, `dmc-lab-db*`, zona
+  `lab.democorp.cloud` y certificados ACM regionales.
+- En otra cuenta, crear previamente una VPC por región con subredes públicas, privadas con NAT
+  y de base de datos; la zona Route 53 y certificados ACM por región. Luego adaptar
+  `metadata.tf` y los data sources al dominio y tagging propios. El stack no crea esa base.
 - Permisos sobre RDS, ECS, ECR, ELB, VPC, Route 53, IAM y ARC Region switch.
