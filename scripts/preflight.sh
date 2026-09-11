@@ -11,7 +11,7 @@ done
 
 # Pilot light: sólo la región con rol inicial "writer" debe estar warm y servir OIDC. La
 # región "reader" arranca en 0 tareas a propósito; ARC la escala durante la conmutación.
-# region_roles refleja el rol inicial de Terraform, no el estado real post-conmutación:
+# region_roles refleja el rol inicial del stack, no el estado real post-conmutación:
 # correr este preflight después de un switchover exige antes revisar la región activa a mano.
 primary_region=$(jq -r '.region_roles.value.primary.region' <<<"$outputs")
 

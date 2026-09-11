@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
-# Contratos estáticos sobre el código. No consulta AWS ni ejecuta Terraform/Terragrunt.
+# Contratos estáticos sobre el código. No consulta AWS ni ejecuta Terragrunt.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 
-# Stack Terragrunt: fuente de verdad de la orquestación por capas.
+# Stack Terragrunt: única fuente de la orquestación por capas.
 tg="$repo_root/terragrunt"
 tg_arc="$tg/workload/drarch-arc/laboratory"
 tg_wl_use2="$tg/workload/drarch-use2/laboratory"
 tg_wl_use1="$tg/workload/drarch-use1/laboratory"
 tg_proj_use2="$tg/project/drarch-use2/laboratory"
-
-# Stack Terraform: se conserva hasta validar la migración.
-tf_stack="$repo_root/terraform/modules/dr-architecture"
-tf_region="$repo_root/terraform/modules/keycloak-region"
 
 fail() { echo "$1" >&2; exit 1; }
 
@@ -21,8 +17,8 @@ fail() { echo "$1" >&2; exit 1; }
 # Contratos del stack Terragrunt
 # ---------------------------------------------------------------------------
 
-# Seis capas, ni más ni menos: cada una existe para romper una dependencia que Terraform
-# no puede resolver dentro de un solo state.
+# Seis capas, ni más ni menos: cada una existe para romper una dependencia que un único
+# state no puede resolver.
 for layer in \
   project/drarch-global/laboratory \
   project/drarch-use2/laboratory \
@@ -72,7 +68,7 @@ grep -Eq 'contains\(\["t3", "t4g"\]' "$tg_proj_use2/variables.tf" \
 if grep -RInE --exclude-dir=.terraform --exclude-dir=.terragrunt-cache --exclude-dir=.tfstate \
   --exclude='terraform.tfstate*' \
   'aws_db_proxy|DB_PROXY_ENDPOINTS|CustomActionLambda|proxy_writer_gate' \
-  "$repo_root/terraform" "$repo_root/terragrunt" "$repo_root/app"; then
+  "$repo_root/terragrunt" "$repo_root/app"; then
   fail "Quedaron referencias activas al diseño retirado"
 fi
 
@@ -83,26 +79,13 @@ grep -Eq 'global-bundle\.pem' "$repo_root/app/Dockerfile" || fail "Falta el bund
 # No mezclar orígenes de módulos: sólo wrappers de gocloudLa o rutas relativas locales.
 # hashicorp/* queda permitido porque es el origen de los providers, no de los módulos.
 foreign=$(grep -RhoE --exclude-dir=.terraform --exclude-dir=.terragrunt-cache \
-  '^[[:space:]]*source[[:space:]]*=[[:space:]]*"[^"]+"' "$repo_root/terraform" "$repo_root/terragrunt" \
+  '^[[:space:]]*source[[:space:]]*=[[:space:]]*"[^"]+"' "$repo_root/terragrunt" \
   | sed 's/.*"\(.*\)"/\1/' \
   | grep -Ev '^(\.|gocloudLa/|hashicorp/)' || true)
 if [[ -n "$foreign" ]]; then
   echo "Hay módulos de un origen distinto a gocloudLa:" >&2
   echo "$foreign" >&2
   exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# Contratos del stack Terraform (legacy, mientras coexista)
-# ---------------------------------------------------------------------------
-
-if [[ -d "$tf_stack" ]]; then
-  tf_steps=$(grep -Ec 'execution_block_type[[:space:]]*=' "$tf_stack/arc.tf" || true)
-  [[ "$tf_steps" -eq 3 ]] || fail "El stack Terraform debe tener tres execution blocks; tiene $tf_steps"
-  grep -Eq 'DB_HOST[[:space:]]*=[[:space:]]*data\.aws_rds_cluster\.this\.endpoint' "$tf_region/main.tf" \
-    || fail "El stack Terraform debe usar el endpoint del clúster regional como DB_HOST"
-  grep -Eq 'depends_on[[:space:]]*=[[:space:]]*\[module\.ecs\]' "$tf_region/main.tf" \
-    || fail "El stack Terraform conserva el depends_on del clúster ECS"
 fi
 
 echo "Contratos de capas/ARC/naming: OK"

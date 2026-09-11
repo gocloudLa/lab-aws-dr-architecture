@@ -5,13 +5,9 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 AWS_PAGER=""
 export AWS_PAGER
 
-# Dos backends de orquestación conviven mientras se valida la migración:
-#   terragrunt (default): un state por capa bajo terragrunt/<layer>/<project>/laboratory
-#   terraform:            el root module único de terraform/examples/lab
-# Exportar IAC_MODE=terraform para operar la demo contra el stack viejo.
-IAC_MODE=${IAC_MODE:-terragrunt}
+# La demo se orquesta con Terragrunt: un state por capa bajo
+# terragrunt/<layer>/<project>/laboratory. Los scripts leen los outputs de esas capas.
 TG_ROOT=${TG_ROOT:-"$REPO_ROOT/terragrunt"}
-TF_DIR=${TF_DIR:-"$REPO_ROOT/terraform/examples/lab"}
 
 need() { command -v "$1" >/dev/null || { echo "Falta la herramienta requerida: $1" >&2; exit 69; }; }
 
@@ -39,8 +35,7 @@ tg_layer_outputs() {
   }
 }
 
-# Reconstruye el contrato de outputs que consumen los scripts a partir de las capas.
-# Los nombres se mantienen idénticos a los del stack Terraform para no duplicar lógica.
+# Reconstruye, a partir de las seis capas, el contrato de outputs que consumen los scripts.
 tg_aggregate_outputs() {
   local global proj2 proj1 wl2 wl1 arc
   global=$(tg_layer_outputs project/drarch-global/laboratory)
@@ -99,15 +94,13 @@ tg_aggregate_outputs() {
     }'
 }
 
-# Los outputs se leen una sola vez por invocación: con Terragrunt son seis llamadas.
+# Los outputs se agregan una sola vez por invocación (son seis lecturas, una por capa).
 _OUTPUTS_CACHE=""
 tf_outputs() {
   if [[ -z "$_OUTPUTS_CACHE" ]]; then
-    case "$IAC_MODE" in
-      terragrunt) need terragrunt; need jq; _OUTPUTS_CACHE=$(tg_aggregate_outputs) ;;
-      terraform)  need terraform; _OUTPUTS_CACHE=$(terraform -chdir="$TF_DIR" output -json) ;;
-      *) echo "IAC_MODE inválido: $IAC_MODE (terragrunt|terraform)" >&2; exit 64 ;;
-    esac
+    need terragrunt
+    need jq
+    _OUTPUTS_CACHE=$(tg_aggregate_outputs)
   fi
   printf '%s' "$_OUTPUTS_CACHE"
 }

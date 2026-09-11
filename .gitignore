@@ -1,4 +1,4 @@
-# Estado y archivos locales de Terraform
+# Estado y archivos locales de Terraform (Terragrunt lo usa como binario por debajo)
 **/.terraform/
 **/*.tfstate
 **/*.tfstate.*
@@ -29,8 +29,8 @@ terragrunt.rendered.hcl
 # Reportes de crash del propio binario.
 terragrunt-crash-*
 
-# Nota: los .terraform.lock.hcl de cada capa SÍ se versionan, igual que los de
-# terraform/examples/*, para fijar las versiones de providers entre corridas.
+# Nota: los .terraform.lock.hcl de cada capa SÍ se versionan, para fijar las versiones de
+# providers entre corridas.
 
 # Secretos y variables locales
 **/.env

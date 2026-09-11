@@ -1,117 +1,114 @@
 # Guía de la demo, punta a punta
 
-Reproducible en cualquier cuenta AWS. Los pasos con AWS **no fueron ejecutados** en este repo: la validación disponible es local. Ver [Validación local](#validación-local).
+La demo se orquesta con **Terragrunt** sobre una red AWS ya existente (VPC, subredes y NAT).
+Todo el ciclo (bootstrap del realm, switchover y failback) se opera con targets `make`.
 
 ## Prerrequisitos
 
-- Terraform ≥ 1.10, AWS CLI v2, Docker y `jq`.
-- Una cuenta AWS con permisos sobre RDS, ECS, ECR, ELB, VPC, Route 53, IAM, SSM y ARC Region switch.
+- Terragrunt v1.x (usa Terraform como binario por debajo), AWS CLI v2, Docker y `jq`.
+- Una cuenta AWS con permisos sobre RDS, ECS, ECR, ELB, VPC, Route 53, IAM y ARC Region switch.
 - Una zona pública Route 53 con un dominio propio.
-- Dos certificados ACM, uno por región (`us-east-2` y `us-east-1`), que cubran `app.<dominio>` y `<key>.app.<dominio>`.
+- Dos certificados ACM, uno por región (`us-east-2` y `us-east-1`), que cubran `app.<dominio>`
+  y los hostnames regionales `app-use2.<dominio>` / `app-use1.<dominio>`. Un wildcard
+  `*.<dominio>` cubre los tres (es un solo label bajo el dominio).
+- Credenciales AWS activas exportadas en la terminal antes de cada operación contra AWS.
 
-## Elegir orquestación
+## Orquestación por capas
 
-Durante la migración conviven dos:
+El stack se separa en **seis capas** bajo `terragrunt/`, siguiendo la convención
+`<layer>/<project>/<environment>`. Cada capa existe para romper una dependencia que un único
+state no puede resolver (los wrappers resuelven ALB, target groups y clúster ECS con data
+sources internos cuyo `for_each`/`count` no se puede expandir hasta que existan los recursos
+de la capa de abajo). Ver [terragrunt/README.md](../terragrunt/README.md) para el DAG completo.
 
-| Orquestación | Cuándo | Cómo |
-|---|---|---|
-| **`terragrunt/`** (recomendada) | Red existente. Un comando, sin condiciones de carrera | `make tg-apply` |
-| `terraform/examples/lab` | Stack anterior, se conserva hasta validar la migración | `IAC_MODE=terraform` + `terraform apply` por etapas |
-| `terraform/examples/complete` | Cuenta vacía, crea también VPC/NAT/peering | ídem |
-
-El stack Terragrunt separa el despliegue en seis capas porque los wrappers resuelven ALB,
-target groups y clúster ECS con data sources internos que no se pueden expandir en un único
-state. Ver [terragrunt/README.md](../terragrunt/README.md) para el detalle y el DAG.
-
-Los scripts de `scripts/` leen los outputs de las capas de Terragrunt por defecto; exportar
-`IAC_MODE=terraform` para operar la demo contra el stack anterior.
-
-### Variantes del stack Terraform
-
-| Variante | Cuándo | Qué crea |
-|---|---|---|
-| `terraform/examples/complete` | Cuenta vacía, demo desde cero | VPC, NAT, subredes y peering, más todo el stack |
-| `terraform/examples/lab` | Ya tenés red | Sólo el stack, sobre tu VPC/NAT/subredes |
-
-`lab` resuelve la red por tag `Name`, no por ID. Tu VPC debe tener subredes públicas (ALB), privadas con salida por NAT (ECS) y de base de datos, y un security group por defecto etiquetado. **No hace falta peering ni conectividad interregional**: cada Keycloak conecta siempre al clúster Aurora de su propia región (patrón pilot light, ver [architecture.md](architecture.md)). Los nombres se declaran en `primary_network` / `secondary_network`.
-
-Los comandos siguientes usan `complete`; para `lab`, cambiar el directorio y exportar `TF_DIR=terraform/examples/lab` antes de correr los scripts.
-
-## 1. Configurar
-
-```bash
-cd terraform/examples/complete
-cp terraform.tfvars.example terraform.tfvars   # completar zona, dominio y certificados
-terraform init
+```
+project/drarch-global/laboratory    # aws_rds_global_cluster + credenciales compartidas
+project/drarch-use2/laboratory       # Ohio: ECR, Aurora, ALB, clúster ECS
+project/drarch-use1/laboratory       # Virginia: ídem
+workload/drarch-use2/laboratory      # Ohio: ECS service
+workload/drarch-use1/laboratory      # Virginia: ECS service (0 tareas, pilot light)
+workload/drarch-arc/laboratory       # plan de ARC, rol IAM y registros Route 53 FAILOVER
 ```
 
-## 2. Bootstrap: infraestructura sin imagen
+Los scripts de `scripts/` leen los outputs de las seis capas y los agregan en un único
+contrato JSON, así que operan la demo sin conocer la estructura interna.
 
-`ecs_desired_count = 0` crea los ECR y el resto de la infraestructura sin intentar arrancar una imagen que todavía no existe.
+La red se resuelve por tag `Name`, no por ID: la VPC debe tener subredes públicas (ALB),
+privadas con salida por NAT (ECS) y de base de datos, más un security group por defecto
+etiquetado, con el prefijo de nombre que fija `metadata` en cada capa. **No hace falta peering
+ni conectividad interregional**: cada Keycloak conecta siempre al clúster Aurora de su propia
+región (patrón pilot light, ver [architecture.md](architecture.md)).
+
+## 1. Aplicar el stack
+
+Terragrunt v1 quedó instalado en `~/bin`; asegurate de tenerlo en el `PATH`:
 
 ```bash
-terraform plan -out=infra.tfplan
-terraform show infra.tfplan
-terraform apply infra.tfplan
-terraform output
+export PATH="$HOME/bin:$PATH"
+make tg-apply     # un comando, respeta el DAG (~20 min; Aurora domina, ~7 min por región)
 ```
 
-Guardá los outputs no sensibles: `ecr_repository_urls`, `global_writer_endpoint`, `regional_app_urls`, `arc_plan_arn`.
+Es reanudable: si las credenciales expiran a mitad, el state de cada capa ya aplicada
+persiste y alcanza con volver a correrlo. Cada capa arranca con `ecs_desired_count = 0` en la
+región secundaria (pilot light), que ARC escala durante la conmutación.
 
-## 3. Publicar la imagen en ambas regiones
+Notas de configuración de este lab, ya fijadas en el código:
 
-Una sola imagen, el mismo tag en los dos ECR. Los repositorios son inmutables: un tag no se repisa.
+- **Aurora provisioned `db.r6g.large`**: Global Database no admite clases burstable
+  (`db.t3`/`db.t4g`); ésta es la memory-optimized más chica disponible en ambas regiones.
+- **Engine `16.14`**: la `16.6` fue deprecada en RDS.
+- **Container Insights deshabilitado** en ambos clústeres ECS (no se necesita esa telemetría
+  para el lab).
+
+## 2. Publicar la imagen en ambas regiones
+
+Una sola imagen, el mismo tag en los dos ECR. Los repositorios son inmutables: un tag no se
+repisa.
 
 ```bash
-cd ../../..
-make build-push TAG=demo-v1 TF_DIR=terraform/examples/complete
+make build-push TAG=demo-v1
 ```
 
-## 4. Habilitar el servicio en la región primaria
+## 3. Habilitar el servicio en la región primaria
 
-En `terraform.tfvars`: `container_image_tag = "demo-v1"` y `ecs_desired_count = 1`.
+La región primaria (Ohio) arranca con su ECS service en 1 tarea. La secundaria (Virginia)
+queda en **pilot light** (0 tareas), porque su clúster Aurora es réplica de sólo lectura y
+Keycloak no podría completar su migración de escritura contra él. El plan de ARC la escala
+durante la conmutación, después de promover Aurora (ver paso 6).
 
-```bash
-cd terraform/examples/complete
-terraform plan -out=services.tfplan
-terraform show services.tfplan
-terraform apply services.tfplan
-```
+## 4. Cargar el realm de demo
 
-`ecs_desired_count` sólo controla la región primaria. La secundaria es **pilot light**: su Terraform la fija en 0 tareas sin importar este valor, porque su clúster Aurora es réplica de sólo lectura y Keycloak no podría completar su migración de escritura contra él. El plan de ARC la escala durante la conmutación, después de promover Aurora (ver paso 7).
-
-## 5. Cargar el realm de demo
-
-Las credenciales las genera Terraform y quedan en parámetros SSM cifrados, creados por el wrapper de ECS Service:
+Las credenciales del admin de Keycloak las genera la capa global y quedan como outputs
+sensibles. El bootstrap crea el realm `community-day` y el usuario de demo, de forma
+idempotente:
 
 ```bash
-region=us-east-2
-prefix=gcl-lab-drarch-keycloak-app
-get() { aws ssm get-parameter --with-decryption --region "$region" \
-  --name "$prefix-$1" --query Parameter.Value --output text; }
+GLOBAL=terragrunt/project/drarch-global/laboratory
 
 export KEYCLOAK_URL="https://app.<dominio>"
-export KC_BOOTSTRAP_ADMIN_USERNAME=$(get KC_BOOTSTRAP_ADMIN_USERNAME)
-export KC_BOOTSTRAP_ADMIN_PASSWORD=$(get KC_BOOTSTRAP_ADMIN_PASSWORD)
+export KC_BOOTSTRAP_ADMIN_USERNAME=$(cd "$GLOBAL" && terragrunt output -raw keycloak_bootstrap_admin_username)
+export KC_BOOTSTRAP_ADMIN_PASSWORD=$(cd "$GLOBAL" && terragrunt output -raw keycloak_bootstrap_admin_password)
 export DEMO_PASSWORD="<una contraseña para el usuario de demo>"
 
-cd ../../.. && make bootstrap
+make bootstrap
 ```
 
-## 6. Preflight
+Verificación rápida: `GET $KEYCLOAK_URL/realms/community-day` debe responder `200`, y un
+login del usuario de demo contra ese realm también `200` (confirma que la escritura previa
+se persistió en Aurora).
+
+## 5. Preflight
 
 ```bash
-make preflight TF_DIR=terraform/examples/complete
-make demo-precheck TF_DIR=terraform/examples/complete
+make preflight
+make demo-precheck
 ```
 
-Exigen la tarea ECS primaria en ejecución y su endpoint regional saludable. La región secundaria está en pilot light (0 tareas) hasta la conmutación, así que su ECS no se valida acá. Consultan AWS; no prueban por sí solos writer, DNS, TLS ni RTO/RPO.
+Exigen la tarea ECS primaria en ejecución y su endpoint regional saludable. La región
+secundaria está en pilot light (0 tareas) hasta la conmutación, así que su ECS no se valida
+acá. Consultan AWS; no prueban por sí solos writer, DNS, TLS ni RTO/RPO.
 
-## 7. Ensayo de conmutación (switchover)
-
-Con el stack Terragrunt, todos los pasos se disparan con targets `make`. Los scripts leen
-los outputs de las seis capas por defecto (`IAC_MODE=terragrunt`), así que **no** hace falta
-pasar `TF_DIR`. Ese parámetro sólo aplica al stack Terraform anterior (`IAC_MODE=terraform`).
+## 6. Ensayo de conmutación (switchover)
 
 Antes de arrancar: registrar commit, tag, hora UTC, writer actual y los dos hostnames
 regionales. Crear un usuario en Admin Console y actualizar un perfil en Account Console, o
@@ -169,12 +166,11 @@ En orden, desde el stack ya aplicado (`make tg-apply`) con la imagen publicada:
 | **Seguir switchover** | `make arc-poll OPERATION=switchover EXECUTION_ID=<id>` | Sigue la ejecución hasta `completed` |
 | Failover (con pérdida) | `ACCEPT_DATA_LOSS=yes make arc-start OPERATION=failover TARGET_REGION=us-east-1` | Igual que switchover pero acepta posible pérdida de datos |
 
-Requisitos previos comunes: credenciales AWS activas en la terminal, `terragrunt` en el
-`PATH` y `IAC_MODE=terragrunt` (valor por defecto). Para el bootstrap, exportar además
-`KEYCLOAK_URL`, `KC_BOOTSTRAP_ADMIN_USERNAME`, `KC_BOOTSTRAP_ADMIN_PASSWORD` y `DEMO_PASSWORD`
-(ver paso 5).
+Requisitos previos comunes: credenciales AWS activas en la terminal y `terragrunt` en el
+`PATH`. Para el bootstrap, exportar además `KEYCLOAK_URL`, `KC_BOOTSTRAP_ADMIN_USERNAME`,
+`KC_BOOTSTRAP_ADMIN_PASSWORD` y `DEMO_PASSWORD` (ver paso 4).
 
-### Failback (switchover inverso)
+## 7. Failback (switchover inverso)
 
 El mismo par de comandos, invirtiendo la región destino, devuelve el tráfico a la región
 original:
@@ -185,32 +181,40 @@ make arc-poll OPERATION=switchover EXECUTION_ID=us-east-2/xxxxxxxxxxxxxxxx
 ```
 
 Validar después: el writer de Aurora volvió a la región original, su ECS corre, y
-`app.<dominio>` resuelve al ALB de esa región. Ver también la sección 8.
+`app.<dominio>` resuelve al ALB de esa región.
 
-## 8. Failback
+La región que queda en espera **no** se baja a 0 automáticamente: el plan de ARC sólo escala
+la región que activa, no apaga la saliente. Con warm standby (ambas regiones en 1 tarea) eso
+es el comportamiento esperado y hace el failback más rápido. Si preferís pilot light estricto
+(pagar una sola región a la vez), bajar la saliente a mano con
+`aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0`.
+`desired_count` está en `ignore_changes`, así que un `make tg-apply` posterior no lo pisa.
 
-Recuperar la región original, confirmar writer y reader reales y la salud de ambos Keycloak, y ejecutar un switchover planificado inverso. La región que vuelve a quedar en espera queda en pilot light (el propio plan de ARC no la vuelve a bajar a 0 automáticamente en el sentido inverso más que escalando el destino del nuevo switchover); si hace falta bajarla a 0 de forma explícita, usar `aws ecs update-service --desired-count 0` sobre esa región. Correr `terraform plan` después de cada promoción: el writer cambia fuera de Terraform, aunque `desired_count` del ECS está en `ignore_changes` y no genera drift.
+## 8. Desmontar
 
-## 9. Desmontar
-
-Detener ambos servicios ECS (`aws ecs update-service --desired-count 0` en la región que haya quedado activa; la otra ya puede seguir en pilot light) y confirmar que no haya ejecuciones ARC activas. Conservar un snapshot manual si hay datos a retener. `deletion_protection` está en `true` por defecto: bajarlo a `false` en `terraform.tfvars` sólo cuando el borrado esté autorizado.
+Detener ambos servicios ECS (`aws ecs update-service --desired-count 0` en la región que haya
+quedado activa; la otra ya puede seguir en pilot light) y confirmar que no haya ejecuciones
+ARC activas. Conservar un snapshot manual si hay datos a retener. `deletion_protection` está
+en `true` por defecto en las capas de Aurora: bajarlo a `false` sólo cuando el borrado esté
+autorizado, y recién ahí destruir.
 
 ```bash
-terraform plan -destroy -out=destroy.tfplan
-terraform show destroy.tfplan
-terraform apply destroy.tfplan
+terragrunt run --all destroy --non-interactive --working-dir terragrunt
 ```
 
-Si AWS rechaza el orden de borrado, parar y revisar el estado real; no forzar sobre una topología sin revisar.
+Si AWS rechaza el orden de borrado, parar y revisar el estado real; no forzar sobre una
+topología sin revisar.
 
 ## Validación local
 
 Sin credenciales AWS y sin crear nada:
 
 ```bash
-make init       # baja wrappers y providers de ambos examples
-make validate   # fmt, validate y contratos estáticos
+make init       # baja wrappers y providers de todas las capas
+make validate   # sintaxis de scripts, contratos estáticos y terragrunt hcl validate
 docker compose -f .docker/docker-compose.yml up --build   # Keycloak contra un PostgreSQL local
 ```
 
-`make validate` no prueba Aurora, ARC, Route 53, TLS contra RDS, cuotas, permisos ni RTO/RPO. Los parámetros de los wrappers son mapas de tipo `any`: `terraform validate` no verifica sus claves. La única prueba real es el ensayo en AWS.
+`make validate` no prueba Aurora, ARC, Route 53, TLS contra RDS, cuotas, permisos ni RTO/RPO.
+Los parámetros de los wrappers son mapas de tipo `any`: la validación no verifica sus claves.
+La única prueba real es el ensayo en AWS.

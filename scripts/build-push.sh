@@ -17,7 +17,7 @@ resolve_repository() {
     printf '%s' "$explicit_url"
     return
   fi
-  # tf_outputs valida por sí solo la herramienta que corresponda según IAC_MODE.
+  # Lee la URL del ECR desde los outputs de Terragrunt.
   map_value ecr_repository_urls "$region"
 }
 

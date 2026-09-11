@@ -1,21 +1,15 @@
-TF_EXAMPLES := terraform/examples/lab terraform/examples/complete
-TF_DIR ?= terraform/examples/lab
 TG_DIR ?= terragrunt
-
-# Mientras se valida la migración conviven las dos orquestaciones. Los scripts leen los
-# outputs según IAC_MODE (terragrunt por defecto; terraform para el stack anterior).
-export IAC_MODE ?= terragrunt
 
 .DEFAULT_GOAL := help
 
 .PHONY: help init validate test-local local-up local-down build-push bootstrap \
 	preflight demo-precheck write-probe fault-stop fault-restore arc-start arc-poll \
-	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-output tf-init tf-validate
+	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-output
 
 help:
 	@echo "Validación y entorno local:"
-	@echo "  make init          # baja wrappers y providers de las dos orquestaciones"
-	@echo "  make validate      # fmt, validate y contratos estáticos"
+	@echo "  make init          # baja wrappers y providers de todas las capas"
+	@echo "  make validate      # sintaxis de scripts y contratos estáticos"
 	@echo "  make test-local"
 	@echo "  make local-up | make local-down"
 	@echo "Stack Terragrunt (por capas, TG_DIR=$(TG_DIR)):"
@@ -38,9 +32,9 @@ help:
 # Validación local (no requiere credenciales AWS)
 # ---------------------------------------------------------------------------
 
-init: tf-init tg-init
+init: tg-init
 
-validate: test-local tf-validate tg-validate
+validate: test-local tg-validate
 
 test-local:
 	@set -e; for script in scripts/*.sh scripts/tests/*.sh app/entrypoint.sh; do bash -n "$$script"; done
@@ -77,15 +71,8 @@ tg-output:
 	scripts/show-outputs.sh
 
 # ---------------------------------------------------------------------------
-# Terraform: stack anterior, se conserva hasta validar la migración
+# Entorno local con Docker
 # ---------------------------------------------------------------------------
-
-tf-init:
-	@set -e; for dir in $(TF_EXAMPLES); do terraform -chdir=$$dir init -backend=false; done
-
-tf-validate:
-	terraform -chdir=terraform fmt -check -recursive
-	@set -e; for dir in $(TF_EXAMPLES); do terraform -chdir=$$dir validate; done
 
 local-up:
 	docker compose -f .docker/docker-compose.yml up --build -d

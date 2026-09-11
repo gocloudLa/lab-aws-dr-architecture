@@ -63,10 +63,10 @@ El paso 2 sí es un gate real: ARC espera a que el ECS destino alcance la capaci
 
 ## Estructura del código
 
-Durante la migración conviven dos orquestaciones. La recomendada es Terragrunt por capas:
+La orquestación es Terragrunt por capas:
 
 ```
-terragrunt/                          # orquestación por capas (recomendada)
+terragrunt/                          # orquestación por capas
 ├── root.hcl                         # backend local, un state por capa
 ├── project/
 │   ├── drarch-global/laboratory/    # aws_rds_global_cluster y credenciales
@@ -76,14 +76,6 @@ terragrunt/                          # orquestación por capas (recomendada)
     ├── drarch-use2/laboratory/      # Ohio: ECS service
     ├── drarch-use1/laboratory/      # Virginia: ECS service en 0 tareas
     └── drarch-arc/laboratory/       # plan de ARC, rol IAM y DNS failover
-
-terraform/                           # stack anterior, hasta validar la migración
-├── modules/
-│   ├── dr-architecture/             # stack: Global Database, ARC, DNS failover y las dos regiones
-│   └── keycloak-region/             # composición regional: ECR, Aurora, ALB, ECS y servicio
-└── examples/
-    ├── lab/                         # sobre una red existente
-    └── complete/                    # crea también VPC, NAT y peering
 ```
 
 Las capas no son una preferencia estética: los wrappers resuelven ALB, target groups y
@@ -92,9 +84,11 @@ existen todavía, así que un único state no puede expandir el grafo y el plan 
 `Invalid for_each argument`. Separado en capas, cada una planifica cuando lo de abajo ya
 existe. Detalle y DAG en [terragrunt/README.md](../terragrunt/README.md).
 
-`examples/complete` sigue creando peering interregional (`wrapper-peering`) porque provisiona una red desde cero y ese es su propio contrato de demo "cuenta vacía". No lo necesita para el patrón pilot light en sí: es una VPC de referencia, no una dependencia del diseño ARC. `examples/lab` no lo crea ni lo necesita.
+La red (VPC, subredes, NAT) se asume preexistente y se resuelve por tag `Name`. No hace falta
+peering ni conectividad interregional: cada Keycloak conecta al clúster Aurora de su propia
+región (pilot light).
 
-Todo se compone con los wrappers de la [Standard Platform de gocloudLa](https://github.com/gocloudLa): `wrapper-vpc`, `wrapper-peering`, `wrapper-rds-aurora`, `wrapper-alb`, `wrapper-ecs`, `wrapper-ecs-service` y `wrapper-ecr`. No se mezclan orígenes de módulos.
+Todo se compone con los wrappers de la [Standard Platform de gocloudLa](https://github.com/gocloudLa): `wrapper-rds-aurora`, `wrapper-alb`, `wrapper-ecs`, `wrapper-ecs-service` y `wrapper-ecr`. No se mezclan orígenes de módulos.
 
 Quedan como `resource` suelto, y sólo porque no existe wrapper equivalente:
 
@@ -103,28 +97,25 @@ Quedan como `resource` suelto, y sólo porque no existe wrapper equivalente:
 | `aws_rds_global_cluster` | Es el recurso que define la demo; ningún wrapper lo cubre |
 | `aws_arcregionswitch_plan` y su rol IAM | ARC Region switch no tiene wrapper |
 | `aws_route53_record` FAILOVER | Deben asociarse a los health checks que genera ARC |
-| `data.aws_rds_cluster` (en `keycloak-region`) | El wrapper de Aurora no publica el endpoint del clúster regional como output |
+| `data.aws_rds_cluster` (en la capa `project` regional) | El wrapper de Aurora no publica el endpoint del clúster regional como output |
 
 ### Providers por región, no el argumento `region`
 
 El provider AWS v6 permite fijar `region` recurso por recurso y así evitar aliases. Acá no se puede: los wrappers resuelven VPC, subredes, security group por defecto, clúster ECS y listener del ALB con **data sources internos que no reciben `region`**. Si se fijara `region` sólo en los recursos, esos `data` seguirían resolviendo contra la región del provider y quedarían apuntando a la red equivocada.
 
-De los recursos que sí declaramos, `aws_rds_global_cluster` y `aws_arcregionswitch_plan` aceptan `region`; `aws_route53_record`, `aws_iam_role` y `aws_iam_role_policy` no lo tienen porque son servicios globales. Aun así el módulo necesita los dos aliases para reenviarlos a `keycloak-region`, así que agregarles `region` no eliminaría nada y duplicaría la fuente de verdad. **Se mantienen `aws.primary` y `aws.secondary`.**
+De los recursos que sí declaramos, `aws_rds_global_cluster` y `aws_arcregionswitch_plan` aceptan `region`; `aws_route53_record`, `aws_iam_role` y `aws_iam_role_policy` no lo tienen porque son servicios globales. Cada capa regional corre con el provider de su propia región, así que no hace falta duplicar `region` recurso por recurso.
 
 ### Dependencias
 
-Casi todas son implícitas, por referencia a atributos reales:
+Dentro de cada capa, casi todas son implícitas, por referencia a atributos reales:
 
 - El ALB y Aurora reciben **IDs de subred**, no patrones de tag.
 - `wrapper-alb` no publica el nombre del ALB, así que se deriva del ARN del listener 443. Además de dar el nombre exacto, obliga a que el listener exista antes de que `wrapper-ecs-service` lo busque.
-- En `examples/complete`, `vpc_name` es el tag `Name` real de la VPC creada.
 
-Quedan dos `depends_on`, y son los que la [documentación de Terraform](https://developer.hashicorp.com/terraform/language/meta-arguments/depends_on) reserva para dependencias que no se pueden expresar con datos:
-
-| Dónde | Por qué |
-|---|---|
-| `keycloak-region` → `module.ecs` | `wrapper-ecs` no publica ningún output: no hay atributo del clúster al que referirse |
-| `examples/complete` → los dos `wrapper-vpc` | `wrapper-ecs-service` sólo acepta `subnet_name` por tag, nunca IDs |
+Entre capas, el orden lo garantiza el DAG de Terragrunt (`dependency`/`dependencies`), no
+`depends_on`: cuando una capa planifica, los recursos de las capas de abajo ya existen y se
+resuelven con data sources o llegan como outputs concretos. Ése es justamente el problema que
+la separación en capas elimina.
 
 ## Interfaces
 

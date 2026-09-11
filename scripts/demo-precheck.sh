@@ -9,7 +9,7 @@ expected_issuer="https://$(output_value app_dns_name)/realms/$realm"
 curl --fail --silent --show-error "$KEYCLOAK_URL/realms/$realm/.well-known/openid-configuration" \
   | jq -e --arg issuer "$expected_issuer" '.issuer == $issuer' >/dev/null
 
-# Pilot light: sólo la región activa (rol inicial "writer" en Terraform) debe estar warm
+# Pilot light: sólo la región activa (rol inicial "writer" en el stack) debe estar warm
 # y servir OIDC regional. La región en espera arranca en 0 tareas a propósito; correr
 # este precheck después de un switchover exige antes confirmar a mano cuál región quedó activa.
 primary_region=$(output_value region_roles | jq -r '.primary.region')
