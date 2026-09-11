@@ -14,7 +14,11 @@ EOF
 
 cat >"$stub_dir/aws" <<'EOF'
 #!/usr/bin/env bash
-if [[ " $* " == *" start-plan-execution "* ]]; then
+if [[ " $* " == *" get-plan "* ]]; then
+  # start-arc.sh resuelve la versión del plan antes de ejecutarlo: el servicio espera
+  # ese número en latestVersion (no un booleano).
+  printf '1\n'
+elif [[ " $* " == *" start-plan-execution "* ]]; then
   input=""
   while (($#)); do
     if [[ "$1" == "--cli-input-json" ]]; then
@@ -39,7 +43,7 @@ capture="$stub_dir/request.json"
 export IAC_MODE=terraform
 
 PATH="$stub_dir:$PATH" AWS_CAPTURE="$capture" "$repo_root/scripts/start-arc.sh" switchover us-east-1 >/dev/null
-jq -e '.targetRegion == "us-east-1" and .action == "activate" and .mode == "graceful" and .latestVersion == "true"' "$capture" >/dev/null
+jq -e '.targetRegion == "us-east-1" and .action == "activate" and .mode == "graceful" and .latestVersion == "1"' "$capture" >/dev/null
 
 if PATH="$stub_dir:$PATH" AWS_CAPTURE="$capture" FAKE_ARC_STATE=completedWithExceptions \
   "$repo_root/scripts/poll-arc.sh" switchover us-east-1/0123456789abcdef >/dev/null 2>&1; then

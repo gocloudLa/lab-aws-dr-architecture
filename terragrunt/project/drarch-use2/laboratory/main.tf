@@ -193,6 +193,9 @@ module "ecs" {
       default_capacity_provider_strategy = {
         FARGATE = { weight = 100 }
       }
+      # Container Insights deshabilitado: el wrapper lo activa por defecto, pero para el
+      # lab no se necesita esa telemetría (ni su costo de CloudWatch).
+      cluster_settings = [{ name = "containerInsights", value = "disabled" }]
     }
   }
 }

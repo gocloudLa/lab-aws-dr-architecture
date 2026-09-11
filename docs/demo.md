@@ -107,25 +107,85 @@ make demo-precheck TF_DIR=terraform/examples/complete
 
 Exigen la tarea ECS primaria en ejecución y su endpoint regional saludable. La región secundaria está en pilot light (0 tareas) hasta la conmutación, así que su ECS no se valida acá. Consultan AWS; no prueban por sí solos writer, DNS, TLS ni RTO/RPO.
 
-## 7. Ensayo de conmutación
+## 7. Ensayo de conmutación (switchover)
 
-Antes de arrancar: registrar commit, tag, hora UTC, writer actual y los dos hostnames regionales. Crear un usuario en Admin Console y actualizar un perfil en Account Console, o usar `make write-probe`, para tener un dato de control.
+Con el stack Terragrunt, todos los pasos se disparan con targets `make`. Los scripts leen
+los outputs de las seis capas por defecto (`IAC_MODE=terragrunt`), así que **no** hace falta
+pasar `TF_DIR`. Ese parámetro sólo aplica al stack Terraform anterior (`IAC_MODE=terraform`).
+
+Antes de arrancar: registrar commit, tag, hora UTC, writer actual y los dos hostnames
+regionales. Crear un usuario en Admin Console y actualizar un perfil en Account Console, o
+usar `make write-probe`, para tener un dato de control.
 
 ```bash
-# 1. Simular la caída de la aplicación en la región activa
-make fault-stop REGION=us-east-2 TF_DIR=terraform/examples/complete
+# 1. (Opcional) Dejar un dato de control escrito contra el writer actual
+make write-probe
 
-# 2. Conmutar. switchover no espera pérdida; failover la acepta explícitamente.
-make arc-start OPERATION=switchover TARGET_REGION=us-east-1 TF_DIR=terraform/examples/complete
-# ACCEPT_DATA_LOSS=yes make arc-start OPERATION=failover TARGET_REGION=us-east-1 TF_DIR=terraform/examples/complete
+# 2. (Opcional) Simular la caída de la aplicación en la región activa
+make fault-stop REGION=us-east-2
 
-# 3. Seguir la ejecución
-make arc-poll OPERATION=switchover EXECUTION_ID=EXECUTION_ID TF_DIR=terraform/examples/complete
+# 3. Conmutar. switchover no espera pérdida; failover la acepta explícitamente.
+make arc-start OPERATION=switchover TARGET_REGION=us-east-1
+# ACCEPT_DATA_LOSS=yes make arc-start OPERATION=failover TARGET_REGION=us-east-1
+
+# 4. Seguir la ejecución hasta que complete (usar el executionId que devolvió arc-start)
+make arc-poll OPERATION=switchover EXECUTION_ID=us-east-1/xxxxxxxxxxxxxxxx
 ```
 
-El plan hace exactamente tres cosas, en orden estricto: promueve Aurora en la región destino, escala el ECS de esa región de 0 a N tareas (pilot light: recién ahí arranca Keycloak, con su clúster local ya promovido y escribible), y por último mueve el health check de Route 53. El paso de ECS sí es un gate: ARC espera a que la capacidad pedida esté corriendo (o el timeout) antes de tocar el DNS, así que Route 53 no publica un ALB sin backend. No hay, en cambio, comprobación de que Keycloak ya pasó su propio health check de aplicación más allá de lo que reporta el ECS. Registrá cualquier `5xx`, fallo de login o intervalo de indisponibilidad, incluido el tiempo de arranque de Keycloak en la región destino.
+`arc-start` es asíncrono: `start-plan-execution` inicia la ejecución en el servicio y
+devuelve el `executionId` de inmediato. Aunque el comando local se corte (por timeout o por
+credenciales), la ejecución sigue en AWS; en ese caso, obtené el id con
+`aws arc-region-switch list-plan-executions --region <TARGET_REGION> --plan-arn <arn>` y
+seguí con `make arc-poll`. Iniciar un segundo `arc-start` mientras hay una ejecución en curso
+falla con `There is already an execution ongoing`: es la misma conmutación, no un error.
 
-Desde un cliente limpio: resolver `app.<dominio>`, entrar, y verificar que el usuario y el perfil de control siguen ahí. La primera operación confirmada cierra el cronómetro. Comparar timestamps antes y después para el RPO; si no se puede medir, declararlo **no medido**.
+El plan hace exactamente tres cosas, en orden estricto: promueve Aurora en la región destino,
+escala el ECS de esa región de 0 a N tareas (pilot light: recién ahí arranca Keycloak, con su
+clúster local ya promovido y escribible), y por último mueve el health check de Route 53. El
+paso de ECS sí es un gate: ARC espera a que la capacidad pedida esté corriendo (o el timeout)
+antes de tocar el DNS, así que Route 53 no publica un ALB sin backend. No hay, en cambio,
+comprobación de que Keycloak ya pasó su propio health check de aplicación más allá de lo que
+reporta el ECS. Registrá cualquier `5xx`, fallo de login o intervalo de indisponibilidad,
+incluido el tiempo de arranque de Keycloak en la región destino.
+
+Desde un cliente limpio: resolver `app.<dominio>`, entrar, y verificar que el usuario y el
+perfil de control siguen ahí. La primera operación confirmada cierra el cronómetro. Comparar
+timestamps antes y después para el RPO; si no se puede medir, declararlo **no medido**.
+
+### Referencia rápida: todos los comandos `make` del ensayo
+
+En orden, desde el stack ya aplicado (`make tg-apply`) con la imagen publicada:
+
+| Paso | Comando `make` | Qué hace |
+|---|---|---|
+| Publicar imagen | `make build-push TAG=demo-v1` | Construye una imagen y la sube al ECR de ambas regiones |
+| Cargar realm demo | `make bootstrap` | Crea el realm `community-day` y el usuario de demo (idempotente) |
+| Preflight | `make preflight` | Valida que el ECS primario corre y su endpoint regional responde |
+| Precheck | `make demo-precheck` | Chequeos adicionales de estado previos a la conmutación |
+| Dato de control | `make write-probe` | Escribe un registro de control contra el writer actual |
+| Simular caída | `make fault-stop REGION=us-east-2` | Baja el ECS de la región activa para forzar el escenario |
+| Restaurar caída | `make fault-restore REGION=us-east-2` | Revierte el `fault-stop` |
+| **Iniciar switchover** | `make arc-start OPERATION=switchover TARGET_REGION=us-east-1` | Dispara el plan ARC hacia la región destino; devuelve `executionId` |
+| **Seguir switchover** | `make arc-poll OPERATION=switchover EXECUTION_ID=<id>` | Sigue la ejecución hasta `completed` |
+| Failover (con pérdida) | `ACCEPT_DATA_LOSS=yes make arc-start OPERATION=failover TARGET_REGION=us-east-1` | Igual que switchover pero acepta posible pérdida de datos |
+
+Requisitos previos comunes: credenciales AWS activas en la terminal, `terragrunt` en el
+`PATH` y `IAC_MODE=terragrunt` (valor por defecto). Para el bootstrap, exportar además
+`KEYCLOAK_URL`, `KC_BOOTSTRAP_ADMIN_USERNAME`, `KC_BOOTSTRAP_ADMIN_PASSWORD` y `DEMO_PASSWORD`
+(ver paso 5).
+
+### Failback (switchover inverso)
+
+El mismo par de comandos, invirtiendo la región destino, devuelve el tráfico a la región
+original:
+
+```bash
+make arc-start OPERATION=switchover TARGET_REGION=us-east-2
+make arc-poll OPERATION=switchover EXECUTION_ID=us-east-2/xxxxxxxxxxxxxxxx
+```
+
+Validar después: el writer de Aurora volvió a la región original, su ECS corre, y
+`app.<dominio>` resuelve al ALB de esa región. Ver también la sección 8.
 
 ## 8. Failback
 
