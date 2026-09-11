@@ -12,13 +12,15 @@ trap 'rm -rf "$stub_dir"' EXIT
 cat >"$stub_dir/terragrunt" <<'EOF'
 #!/usr/bin/env bash
 cat <<'JSON'
-{"arc_plan_arn":{"value":"arn:aws:arc-region-switch:us-east-2:123456789012:plan/example"},"arc_aurora_behavior":{"value":"switchoverOnly"},"app_dns_name":{"value":"app.example.com"},"region_roles":{"value":{}},"public_zone_id":{"value":"Z0"},"global_cluster_identifier":{"value":"mock-global"},"global_writer_endpoint":{"value":"mock.endpoint"},"aurora_engine_version":{"value":"16.14"},"aurora_instance_class":{"value":"db.r6g.large"},"ecr_repository_url":{"value":"mock"},"regional_app_url":{"value":"https://mock"},"ecs_cluster_name":{"value":"mock"},"ecs_service_name":{"value":"mock"},"aurora_cluster_arn":{"value":"arn:mock"},"aurora_cluster_endpoint":{"value":"mock"}}
+{"arc_plan_arn":{"value":"arn:aws:arc-region-switch:us-east-2:123456789012:plan/example"},"arc_aurora_behavior":{"value":"switchoverOnly"},"app_dns_name":{"value":"app.example.com"},"region_roles":{"value":{"primary":{"region":"us-east-2","initial_role":"writer"},"secondary":{"region":"us-east-1","initial_role":"reader"}}},"public_zone_id":{"value":"Z0"},"global_cluster_identifier":{"value":"mock-global"},"global_writer_endpoint":{"value":"mock.endpoint"},"aurora_engine_version":{"value":"16.14"},"aurora_instance_class":{"value":"db.r6g.large"},"ecr_repository_url":{"value":"mock"},"regional_app_url":{"value":"https://mock"},"ecs_cluster_name":{"value":"mock"},"ecs_service_name":{"value":"mock"},"aurora_cluster_arn":{"value":"arn:mock"},"aurora_cluster_endpoint":{"value":"mock"}}
 JSON
 EOF
 
 cat >"$stub_dir/aws" <<'EOF'
 #!/usr/bin/env bash
-if [[ " $* " == *" get-plan "* ]]; then
+if [[ " $* " == *" describe-global-clusters "* ]]; then
+  printf '%s\n' '{"GlobalClusters":[{"GlobalClusterMembers":[{"DBClusterArn":"arn:aws:rds:us-east-2:123456789012:cluster:reader","IsWriter":false},{"DBClusterArn":"arn:aws:rds:us-east-1:123456789012:cluster:writer","IsWriter":true}]}]}'
+elif [[ " $* " == *" get-plan "* ]]; then
   # start-arc.sh resuelve la versión del plan antes de ejecutarlo: el servicio espera
   # ese número en latestVersion (no un booleano).
   printf '1\n'
@@ -41,6 +43,9 @@ EOF
 chmod +x "$stub_dir/terragrunt" "$stub_dir/aws"
 
 capture="$stub_dir/request.json"
+
+writer_region=$(PATH="$stub_dir:$PATH" bash -c 'source "$1"; current_writer_region' _ "$repo_root/scripts/lib.sh")
+[[ "$writer_region" == "us-east-1" ]] || { echo "current_writer_region devolvió $writer_region" >&2; exit 1; }
 
 PATH="$stub_dir:$PATH" AWS_CAPTURE="$capture" "$repo_root/scripts/start-arc.sh" switchover us-east-1 >/dev/null
 jq -e '.targetRegion == "us-east-1" and .action == "activate" and .mode == "graceful" and .latestVersion == "1"' "$capture" >/dev/null

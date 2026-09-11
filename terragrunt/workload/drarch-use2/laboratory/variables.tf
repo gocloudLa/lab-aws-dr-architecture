@@ -44,7 +44,7 @@ variable "container_image_tag" {
 }
 
 variable "ecs_desired_count" {
-  description = "Tareas Keycloak en esta región. Warm standby: ambas regiones corren 1; la secundaria falla hasta que ARC promueve su Aurora."
+  description = "Tareas Keycloak en esta región. Warm standby: ambas regiones conservan 1; la reader no recibe tráfico hasta que ARC promueve su Aurora."
   type        = number
 
   validation {

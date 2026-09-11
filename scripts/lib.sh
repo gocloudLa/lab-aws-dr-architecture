@@ -115,3 +115,30 @@ map_value() {
   key=$(region_key "$key")
   output_value "$output" | jq -er --arg key "$key" '.[$key]'
 }
+
+# Obtiene la región writer efectiva de Aurora. region_roles describe únicamente los roles
+# iniciales del stack y queda desactualizado después de un switchover; se usa su región
+# primaria sólo como endpoint de control para consultar el Global Database.
+current_writer_region() {
+  local outputs=${1:-} control_region global_cluster_identifier writer_region
+  [[ -n "$outputs" ]] || outputs=$(tf_outputs)
+
+  control_region=$(jq -er '.region_roles.value.primary.region' <<<"$outputs")
+  require_region "$control_region"
+  global_cluster_identifier=$(jq -er '.global_cluster_identifier.value' <<<"$outputs")
+
+  writer_region=$(aws rds describe-global-clusters \
+    --region "$control_region" \
+    --global-cluster-identifier "$global_cluster_identifier" \
+    --output json \
+    | jq -er '
+        [.GlobalClusters[0].GlobalClusterMembers[]? | select(.IsWriter == true) | .DBClusterArn]
+        | if length == 1
+          then (.[0] | split(":")[3])
+          else error("Aurora Global Database debe tener exactamente un writer")
+          end
+      ')
+
+  require_region "$writer_region"
+  printf '%s' "$writer_region"
+}

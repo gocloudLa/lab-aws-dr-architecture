@@ -9,13 +9,10 @@ for name in ecr_repository_urls ecs_cluster_names ecs_service_names regional_app
   jq -e --arg name "$name" '.[$name].value != null' <<<"$outputs" >/dev/null || { echo "Falta output de infraestructura: $name" >&2; exit 65; }
 done
 
-# Warm standby: ambas regiones corren 1 tarea, pero sólo la región con rol inicial "writer"
-# tiene su Keycloak sano y sirviendo OIDC. La región "reader" corre su tarea en bucle de
-# reinicio a propósito (su Aurora es de sólo lectura), así que sólo se valida que su servicio
-# esté programado (desiredCount > 0), no que esté sano. region_roles refleja el rol inicial
-# del stack, no el estado real post-conmutación: correr este preflight después de un
-# switchover exige antes revisar la región activa a mano.
-primary_region=$(jq -r '.region_roles.value.primary.region' <<<"$outputs")
+# region_roles sólo refleja el arranque del stack. Se consulta Aurora para validar OIDC en la
+# región que es writer ahora; la otra se trata como warm y no falla por runningCount u OIDC.
+writer_region=$(current_writer_region "$outputs")
+echo "Aurora writer actual: $writer_region"
 
 instance_class=$(jq -r '.aurora_instance_class.value' <<<"$outputs")
 for region in us-east-2 us-east-1; do
@@ -33,22 +30,28 @@ for region in us-east-2 us-east-1; do
   service_state=$(aws ecs describe-services --region "$region" --cluster "$cluster" --services "$service" --output json)
   jq -e '.failures | length == 0 and (.services | length) == 1' <<<"$service_state" >/dev/null \
     || { echo "El servicio ECS no existe o tiene fallas en $region" >&2; exit 70; }
-  if [[ "$region" == "$primary_region" ]]; then
+  if [[ "$region" == "$writer_region" ]]; then
     jq -e '.services[0].desiredCount > 0 and .services[0].runningCount >= .services[0].desiredCount' <<<"$service_state" >/dev/null \
-      || { echo "ECS primario no está warm y estable en $region" >&2; exit 70; }
+      || { echo "ECS de la región writer no está estable en $region" >&2; exit 70; }
     regional_url=$(jq -r --arg r "$key" '.regional_app_urls.value[$r]' <<<"$outputs")
     expected_issuer="https://$(jq -r '.app_dns_name.value' <<<"$outputs")/realms/${DEMO_REALM:-community-day}"
     curl --fail --silent --show-error "$regional_url/realms/${DEMO_REALM:-community-day}/.well-known/openid-configuration" \
       | jq -e --arg issuer "$expected_issuer" '.issuer == $issuer' >/dev/null \
       || { echo "OIDC regional no está listo en $region" >&2; exit 70; }
   else
-    # Warm standby: la secundaria debe estar programada (desiredCount > 0), pero su tarea no
-    # arranca sana mientras su Aurora es reader; por eso no se exige runningCount ni OIDC.
+    # Warm standby: la región reader debe conservar capacidad programada, pero no se exige
+    # runningCount ni OIDC. targetServerType=any permite la conexión al reader, aunque las
+    # operaciones que necesiten escritura sólo funcionarán después de la promoción.
     jq -e '.services[0].desiredCount > 0' <<<"$service_state" >/dev/null \
-      || { echo "ECS secundario debería estar warm (desiredCount > 0) en $region" >&2; exit 70; }
+      || { echo "ECS reader debería estar warm (desiredCount > 0) en $region" >&2; exit 70; }
+    running=$(jq -r '.services[0].runningCount' <<<"$service_state")
+    desired=$(jq -r '.services[0].desiredCount' <<<"$service_state")
+    if (( running < desired )); then
+      echo "Aviso: ECS warm en $region tiene runningCount=$running/$desired; no bloquea el preflight mientras Aurora sea reader." >&2
+    fi
   fi
 done
 plan_arn=$(jq -r '.arc_plan_arn.value' <<<"$outputs")
 aws arc-region-switch get-plan-evaluation-status --region us-east-2 --plan-arn "$plan_arn" --output json \
   | jq -e '.evaluationState | ascii_downcase == "passed"' >/dev/null || { echo "La evaluación ARC no está en passed" >&2; exit 70; }
-echo "Preflight completo: cuenta, regiones, ambos ECS warm, OIDC regional y evaluación ARC disponibles."
+echo "Preflight completo: writer $writer_region estable, región reader programada y evaluación ARC disponible."

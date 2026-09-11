@@ -24,7 +24,7 @@ case "$action" in
     done
     desired=$(jq -er .desiredCount "$state_file")
     aws ecs update-service --region "$region" --cluster "$cluster" --service "$service" --desired-count "$desired" --output json | jq '{service:.service.serviceName,desired:.service.desiredCount}'
-    echo "Servicio restaurado; conecta al clúster Aurora local de $region, que ya es writer en esta región."
+    echo "Servicio restaurado en $region; verifique el writer actual antes de enviarle tráfico."
     ;;
   *) exit 64;;
 esac

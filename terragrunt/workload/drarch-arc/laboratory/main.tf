@@ -131,8 +131,8 @@ resource "aws_iam_role_policy" "arc" {
 /*----------------------------------------------------------------------*/
 
 # Tres pasos, en orden estricto: Aurora cambia de writer, después ARC reafirma la capacidad
-# del ECS de la región destino (warm standby: ya corría, pero recién ahora su Aurora es writer
-# y la tarea arranca sana) y por último DNS publica el ALB destino.
+# del ECS de la región destino (warm standby: ya estaba programada, pero recién ahora su Aurora
+# permite escrituras) y por último DNS publica el ALB destino.
 resource "aws_arcregionswitch_plan" "this" {
   name                            = "${local.common_name}-recovery"
   description                     = "Promueve Aurora Global Database, escala el ECS destino y despues conmuta el DNS publico"

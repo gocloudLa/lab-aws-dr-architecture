@@ -52,6 +52,13 @@ for workload_main in "$tg_wl_use2/main.tf" "$tg_wl_use1/main.tf"; do
     || fail "Cada workload regional debe configurar KC_DB_URL_PROPERTIES con targetServerType=any"
 done
 
+# Los chequeos operativos deben consultar el writer efectivo; region_roles sólo refleja el
+# estado inicial y no cambia después de una conmutación.
+grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/preflight.sh" \
+  || fail "preflight debe validar la región writer efectiva"
+grep -Fq 'writer_region=$(current_writer_region "$outputs")' "$repo_root/scripts/demo-precheck.sh" \
+  || fail "demo-precheck debe validar la región writer efectiva"
+
 # El ingress de Aurora sólo abre el CIDR local: si reapareciera el CIDR remoto, volvería la
 # dependencia de peering que este diseño elimina.
 grep -Eq 'cidr_blocks = join\(",", local\.app_cidr_blocks\)' "$tg_proj_use2/main.tf" \
