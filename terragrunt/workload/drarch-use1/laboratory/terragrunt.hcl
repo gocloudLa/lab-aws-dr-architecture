@@ -56,11 +56,8 @@ inputs = {
   # para que ARC pueda escalar el servicio durante el switchover sin recrear nada.
   container_image_tag = "demo-v1"
 
-  # Warm standby: Virginia corre 1 tarea permanentemente, igual que Ohio. Mientras es
-  # secundaria, su Aurora local es de sólo lectura y el driver JDBC de Keycloak
-  # (targetServerType=primary) no puede conectar, así que el container falla en bucle de
-  # reinicio ("Could not find a server with specified targetServerType: primary"). Es un
-  # efecto ACEPTADO del patrón warm standby: la tarea está programada aunque no sana, y
-  # arranca bien recién cuando ARC promueve su Aurora a writer durante el switchover.
+  # Warm standby: Virginia corre 1 tarea permanentemente, igual que Ohio. La task definition
+  # usa targetServerType=any para no rechazar el Aurora reader durante la conexión; ARC debe
+  # promoverlo antes de dirigir tráfico porque la propiedad no habilita escrituras.
   ecs_desired_count = 1
 }

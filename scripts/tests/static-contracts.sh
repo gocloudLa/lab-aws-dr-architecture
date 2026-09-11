@@ -45,9 +45,12 @@ dns_line=$(grep -n 'execution_block_type = "Route53HealthCheck"' "$tg_arc/main.t
 grep -Eq 'DB_HOST = var\.db_host' "$tg_wl_use2/main.tf" || fail "El workload use2 debe usar var.db_host como DB_HOST"
 grep -Eq 'aurora_cluster_endpoint' "$tg_wl_use2/terragrunt.hcl" || fail "db_host debe venir del endpoint del clúster regional"
 
-# Warm standby: ambas regiones corren 1 tarea. La secundaria falla en bucle hasta que ARC
-# promueve su Aurora; es un efecto aceptado del patrón, no un pilot light.
+# Warm standby: ambas regiones corren 1 tarea y aceptan el endpoint local aunque sea reader.
 grep -Eq 'ecs_desired_count = 1' "$tg_wl_use1/terragrunt.hcl" || fail "El workload use1 debe correr warm (1 tarea)"
+for workload_main in "$tg_wl_use2/main.tf" "$tg_wl_use1/main.tf"; do
+  grep -Fq 'KC_DB_URL_PROPERTIES = "?targetServerType=any"' "$workload_main" \
+    || fail "Cada workload regional debe configurar KC_DB_URL_PROPERTIES con targetServerType=any"
+done
 
 # El ingress de Aurora sólo abre el CIDR local: si reapareciera el CIDR remoto, volvería la
 # dependencia de peering que este diseño elimina.
@@ -75,6 +78,8 @@ fi
 
 # Contrato TLS de la imagen.
 grep -Eq 'sslmode=verify-full&sslrootcert=' "$repo_root/app/entrypoint.sh" || fail "Falta el contrato sslmode=verify-full"
+grep -Fq 'additional_db_url_properties=${KC_DB_URL_PROPERTIES:-}' "$repo_root/app/entrypoint.sh" \
+  || fail "El entrypoint debe incorporar KC_DB_URL_PROPERTIES a la URL JDBC efectiva"
 grep -Eq 'global-bundle\.pem' "$repo_root/app/Dockerfile" || fail "Falta el bundle de CA de RDS"
 
 # No mezclar orígenes de módulos: sólo wrappers de gocloudLa o rutas relativas locales.

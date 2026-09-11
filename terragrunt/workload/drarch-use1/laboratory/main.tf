@@ -25,19 +25,17 @@ module "ecs_service" {
       assign_public_ip = false
       launch_type      = "FARGATE"
 
-      # Warm standby: Virginia usa la misma configuración que Ohio (min=max=desired). Corre 1
-      # tarea permanentemente. Mientras Virginia es secundaria, su clúster Aurora local es de
-      # sólo lectura y el driver JDBC de Keycloak (targetServerType=primary) no puede conectar,
-      # así que el container falla en bucle de reinicio. Es un efecto ACEPTADO de esta
-      # estrategia: la región pasiva corre "caliente" (tarea programada) aunque no sana, hasta
-      # que ARC promueve su Aurora a writer durante la conmutación y el container arranca bien.
+      # Warm standby: Virginia usa la misma configuración que Ohio (min=max=desired) y corre 1
+      # tarea permanentemente. targetServerType=any evita rechazar la conexión sólo porque el
+      # Aurora local sea reader, pero no lo vuelve escribible: ARC debe promoverlo antes de
+      # dirigir tráfico a esta región.
       desired_count            = var.ecs_desired_count
       enable_autoscaling       = true
       autoscaling_min_capacity = var.ecs_desired_count
       autoscaling_max_capacity = var.ecs_desired_count
       enable_execute_command   = true
-      cpu                    = 1024
-      memory                 = 2048
+      cpu                      = 1024
+      memory                   = 2048
 
       # Keycloak tarda en arrancar y valida el esquema contra Aurora: sin esta gracia el
       # circuit breaker corta el despliegue antes del primer health check bueno.
@@ -57,21 +55,21 @@ module "ecs_service" {
           map_environment = {
             AWS_REGION = var.aws_region
 
-            # Endpoint del clúster Aurora local a esta región. Mientras la región es
-            # secundaria ese endpoint es de sólo lectura, así que la tarea de Keycloak falla
-            # en bucle (warm standby); cuando ARC promueve el clúster, el mismo hostname
-            # acepta escrituras y el container arranca sano sin reconectar a otro DB_HOST.
+            # Endpoint del clúster Aurora local a esta región. targetServerType=any permite
+            # conectarse cuando el clúster es reader, pero no habilita escrituras; ARC debe
+            # promoverlo antes de que esta región reciba tráfico.
             DB_HOST = var.db_host
             DB_PORT = "5432"
             DB_NAME = var.database_name
 
-            KC_DB              = "postgres"
-            KC_HOSTNAME        = "https://${var.app_hostname}"
-            KC_PROXY_HEADERS   = "xforwarded"
-            KC_HTTP_ENABLED    = "true"
-            KC_HEALTH_ENABLED  = "true"
-            KC_METRICS_ENABLED = "true"
-            KC_CACHE           = "local"
+            KC_DB                = "postgres"
+            KC_DB_URL_PROPERTIES = "?targetServerType=any"
+            KC_HOSTNAME          = "https://${var.app_hostname}"
+            KC_PROXY_HEADERS     = "xforwarded"
+            KC_HTTP_ENABLED      = "true"
+            KC_HEALTH_ENABLED    = "true"
+            KC_METRICS_ENABLED   = "true"
+            KC_CACHE             = "local"
 
             # Conexiones de vida corta y caché DNS acotada favorecen la reconexión después
             # de una promoción; no cancelan transacciones ni garantizan RTO.

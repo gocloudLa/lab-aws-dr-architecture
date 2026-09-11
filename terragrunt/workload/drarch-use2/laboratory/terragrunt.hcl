@@ -61,7 +61,7 @@ inputs = {
   # Imagen publicada en ambos ECR con digest idéntico (make build-push TAG=demo-v1).
   container_image_tag = "demo-v1"
 
-  # Warm standby: Ohio y Virginia corren 1 tarea (misma config). Ohio arranca como writer, así
-  # que su tarea está sana; Virginia corre pero falla en bucle hasta que ARC promueve su Aurora.
+  # Warm standby: Ohio y Virginia corren 1 tarea con la misma configuración. La región reader
+  # acepta la conexión por targetServerType=any, pero ARC debe promoverla antes de darle tráfico.
   ecs_desired_count = 1
 }
