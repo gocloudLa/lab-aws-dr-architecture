@@ -40,7 +40,6 @@ La operación de la demo (bootstrap del realm, switchover, failback) se maneja c
 - `docs/` — Documentación: arquitectura, guía de la demo, diagramas
 - `scripts/` — Scripts de operación (bootstrap, ARC, preflight, build-push)
 - `terragrunt/` — Stack por capas: project (global, use2, use1) + workload
-- `.docker/` — docker-compose para correr Keycloak local contra PostgreSQL
 - `Makefile` — Targets de validación, despliegue y operación
 
 ## Documentación
@@ -60,7 +59,6 @@ Validación local, sin credenciales AWS ni crear nada:
 ```
 make init      # baja wrappers y providers de todas las capas
 make validate  # sintaxis de scripts, contratos estáticos y terragrunt hcl validate
-make local-up  # Keycloak contra un PostgreSQL local (docker compose)
 ```
 
 Despliegue y operación (requieren credenciales AWS activas):

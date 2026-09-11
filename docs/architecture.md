@@ -43,7 +43,7 @@ Aurora Global Database mantiene el writer inicial en Ohio y una réplica asíncr
 
 ## DNS y TLS
 
-El driver JDBC conecta con el hostname real del clúster Aurora regional usando `sslmode=verify-full` y el bundle de CA de RDS como `sslrootcert`: se mantiene validación de cadena y de hostname. No se usa `sslmode=require` como sustituto. En Compose, `LOCAL_MODE` omite ese contrato contra un PostgreSQL local.
+El driver JDBC conecta con el hostname real del clúster Aurora regional usando `sslmode=verify-full` y el bundle de CA de RDS como `sslrootcert`: se mantiene validación de cadena y de hostname. No se usa `sslmode=require` como sustituto.
 
 El pool renueva conexiones (`KC_DB_POOL_MAX_LIFETIME=30s`) y la caché DNS de Java queda acotada (`-Dsun.net.inetaddr.ttl=5`); en el patrón pilot light esto es principalmente defensivo, porque cada Keycloak arranca una sola vez contra su endpoint local ya promovido.
 

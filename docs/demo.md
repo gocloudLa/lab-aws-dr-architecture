@@ -212,7 +212,6 @@ Sin credenciales AWS y sin crear nada:
 ```bash
 make init       # baja wrappers y providers de todas las capas
 make validate   # sintaxis de scripts, contratos estáticos y terragrunt hcl validate
-docker compose -f .docker/docker-compose.yml up --build   # Keycloak contra un PostgreSQL local
 ```
 
 `make validate` no prueba Aurora, ARC, Route 53, TLS contra RDS, cuotas, permisos ni RTO/RPO.

@@ -2,7 +2,7 @@ TG_DIR ?= terragrunt
 
 .DEFAULT_GOAL := help
 
-.PHONY: help init validate test-local local-up local-down build-push bootstrap \
+.PHONY: help init validate test-local build-push bootstrap \
 	preflight demo-precheck write-probe fault-stop fault-restore arc-start arc-poll \
 	tg-init tg-validate tg-fmt tg-graph tg-plan tg-apply tg-output tg-destroy
 
@@ -11,7 +11,6 @@ help:
 	@echo "  make init          # baja wrappers y providers de todas las capas"
 	@echo "  make validate      # sintaxis de scripts y contratos estáticos"
 	@echo "  make test-local"
-	@echo "  make local-up | make local-down"
 	@echo "Stack Terragrunt (por capas, TG_DIR=$(TG_DIR)):"
 	@echo "  make tg-graph      # DAG de dependencias entre capas"
 	@echo "  make tg-plan       # plan de todas las capas"
@@ -77,17 +76,6 @@ tg-output:
 # Requiere deletion_protection = false en las capas de Aurora (ya es el default del lab).
 tg-destroy:
 	terragrunt run --all destroy --non-interactive --working-dir $(TG_DIR)
-
-# ---------------------------------------------------------------------------
-# Entorno local con Docker
-# ---------------------------------------------------------------------------
-
-local-up:
-	docker compose -f .docker/docker-compose.yml up --build -d
-
-# Conserva los datos de PostgreSQL. Borrar el volumen con nombre es un paso aparte.
-local-down:
-	docker compose -f .docker/docker-compose.yml down
 
 # ---------------------------------------------------------------------------
 # Operación de la demo
