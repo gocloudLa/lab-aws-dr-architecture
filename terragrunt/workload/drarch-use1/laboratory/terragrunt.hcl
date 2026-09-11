@@ -56,11 +56,11 @@ inputs = {
   # para que ARC pueda escalar el servicio durante el switchover sin recrear nada.
   container_image_tag = "demo-v1"
 
-  # Pilot light: la región en espera arranca siempre en 0 tareas. Su clúster Aurora es
-  # réplica de sólo lectura, y el driver JDBC de Keycloak usa targetServerType=primary: contra
-  # un reader ni siquiera abre la conexión ("Could not find a server with specified
-  # targetServerType: primary"), así que la tarea nunca arranca sana. El plan de ARC la escala
-  # durante la conmutación, después de promover Aurora y antes de mover el DNS. desired_count
-  # está en ignore_changes dentro del wrapper, así que un apply posterior no la vuelve a 0.
-  ecs_desired_count = 0
+  # Warm standby: Virginia corre 1 tarea permanentemente, igual que Ohio. Mientras es
+  # secundaria, su Aurora local es de sólo lectura y el driver JDBC de Keycloak
+  # (targetServerType=primary) no puede conectar, así que el container falla en bucle de
+  # reinicio ("Could not find a server with specified targetServerType: primary"). Es un
+  # efecto ACEPTADO del patrón warm standby: la tarea está programada aunque no sana, y
+  # arranca bien recién cuando ARC promueve su Aurora a writer durante el switchover.
+  ecs_desired_count = 1
 }

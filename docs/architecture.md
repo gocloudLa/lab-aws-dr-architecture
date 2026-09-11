@@ -1,6 +1,6 @@
 # Arquitectura
 
-Recuperación regional de Keycloak sobre Aurora PostgreSQL Global Database, con un patrón **pilot light regional**: una región activa sirve el tráfico con su ECS corriendo; la otra tiene su clúster Aurora ya replicando pero el ECS en 0 tareas. ARC Region switch promueve Aurora, escala el ECS destino y recién entonces conmuta el DNS.
+Recuperación regional de Keycloak sobre Aurora PostgreSQL Global Database, con un patrón **warm standby regional**: las dos regiones corren su ECS con 1 tarea todo el tiempo y su clúster Aurora replicando. La región activa sirve el tráfico; la región en espera tiene su tarea programada pero, mientras su Aurora es réplica de sólo lectura, el container de Keycloak no puede conectar y queda en bucle de reinicio (efecto aceptado, ver más abajo). ARC Region switch promueve Aurora, (re)escala el ECS destino y recién entonces conmuta el DNS.
 
 ```mermaid
 flowchart LR
@@ -8,7 +8,7 @@ flowchart LR
   D -->|PRIMARY| A2[ALB Ohio]
   D -. SECONDARY .-> A1[ALB Virginia]
   A2 --> E2["ECS Keycloak Ohio<br/>activo · N tareas"]
-  A1 -. "3 escala 0→N" .-> E1["ECS Keycloak Virginia<br/>pilot light · 0 tareas"]
+  A1 -. "3 (re)escala" .-> E1["ECS Keycloak Virginia<br/>warm · 1 tarea, en fallo hasta promover"]
   E2 -->|JDBC TLS local| W[Aurora writer Ohio]
   E1 -->|JDBC TLS local| R[Aurora réplica Virginia]
   W == replicación asíncrona ==> R
@@ -19,14 +19,14 @@ flowchart LR
 
 El diagrama editable de toda la solución está en [diagrams](diagrams).
 
-## Pilot light regional
+## Warm standby regional
 
-Las dos regiones tienen su clúster Aurora desplegado y replicando todo el tiempo, pero sólo la región activa corre tareas ECS. La región en espera queda en pilot light: su infraestructura (ALB, ECR, clúster ECS, security groups) ya existe, pero el servicio Keycloak tiene `desired_count=0` hasta que ARC lo escala como parte de la conmutación.
+Las dos regiones corren con la **misma configuración**: clúster Aurora replicando y ECS con 1 tarea (`desired_count=1`, autoscaling `min=max=1`). La región activa sirve tráfico normalmente. La región en espera tiene su tarea programada de forma permanente, pero mientras su Aurora local es réplica de sólo lectura el container **falla y reinicia en bucle** (ver [Por qué la región en espera falla hasta la promoción](#por-qué-la-región-en-espera-falla-hasta-la-promoción)).
 
-Eso trae consecuencias que conviene decir en voz alta:
+Esta es una decisión de diseño explícita: se prioriza mantener las dos regiones simétricas y alineadas al patrón warm standby por sobre evitar el fallo del container en la región pasiva. Consecuencias a decir en voz alta:
 
-- El RTO no depende sólo de la promoción de Aurora y de la propagación DNS: también suma el tiempo de arrancar tareas Fargate y el arranque de Keycloak (incluida la migración de esquema contra el clúster recién promovido).
-- No se paga cómputo ECS de la región en espera mientras no hay conmutación; sí se paga el clúster Aurora replicando y el ALB. Es la contrapartida explícita de no depender de peering entre VPC.
+- El RTO no depende sólo de la promoción de Aurora y del DNS: tras promover, ARC vuelve a estabilizar la tarea de la región destino (que ya estaba programada) y suma el arranque de Keycloak. La tarea no hay que crearla desde 0, pero sí esperar a que arranque sana contra el Aurora recién promovido.
+- Se paga cómputo ECS de **ambas** regiones todo el tiempo (una sana, otra en bucle de reinicio), más el clúster Aurora replicando y el ALB. Es más caro que un pilot light, y es el trade-off aceptado del warm standby simétrico.
 - Cada Keycloak conecta siempre al clúster Aurora de su **propia** región, nunca al de la otra: no hay ninguna carga que necesite alcanzar por PostgreSQL una VPC remota.
 
 ## Red
@@ -39,13 +39,13 @@ Aurora no tiene acceso público. Las tareas ECS corren en subredes privadas sin 
 
 Aurora Global Database mantiene el writer inicial en Ohio y una réplica asíncrona en Virginia, con una instancia provisioned por región (`aurora_instance_class`, memory-optimized; Aurora Global Database no admite clases burstable como `db.t3`/`db.t4g`). Una instancia por clúster es una elección de demo y **no** equivale a alta disponibilidad completa dentro de una región.
 
-`DB_HOST` es el endpoint del clúster Aurora **regional**, distinto en cada región (no el Global Writer Endpoint compartido). Mientras una región es secundaria, su endpoint local es de sólo lectura, por eso el ECS de esa región permanece en 0 tareas: Keycloak no podría completar su migración de escritura contra un clúster de sólo lectura. Cuando ARC promueve el clúster, el mismo hostname empieza a aceptar escrituras sin que Keycloak deba reconectar a otro host. No hay RDS Proxy, ni CNAME de base de datos, ni Lambda de writer, ni cambio de DNS privado.
+`DB_HOST` es el endpoint del clúster Aurora **regional**, distinto en cada región (no el Global Writer Endpoint compartido). Mientras una región es secundaria, su endpoint local es de sólo lectura, y contra él Keycloak no puede conectar (su driver exige el writer): por eso la tarea de la región en espera falla en bucle hasta la conmutación. Cuando ARC promueve el clúster, el mismo hostname empieza a aceptar escrituras y el container arranca sano, sin que Keycloak deba reconectar a otro host. No hay RDS Proxy, ni CNAME de base de datos, ni Lambda de writer, ni cambio de DNS privado.
 
 ## DNS y TLS
 
 El driver JDBC conecta con el hostname real del clúster Aurora regional usando `sslmode=verify-full` y el bundle de CA de RDS como `sslrootcert`: se mantiene validación de cadena y de hostname. No se usa `sslmode=require` como sustituto.
 
-El pool renueva conexiones (`KC_DB_POOL_MAX_LIFETIME=30s`) y la caché DNS de Java queda acotada (`-Dsun.net.inetaddr.ttl=5`); en el patrón pilot light esto es principalmente defensivo, porque cada Keycloak arranca una sola vez contra su endpoint local ya promovido.
+El pool renueva conexiones (`KC_DB_POOL_MAX_LIFETIME=30s`) y la caché DNS de Java queda acotada (`-Dsun.net.inetaddr.ttl=5`); esto es principalmente defensivo, porque cada Keycloak conecta a su endpoint local y arranca sano recién cuando ese clúster es writer.
 
 `app.<dominio>` usa alias FAILOVER a los dos ALB con `evaluate_target_health=false`: sólo los health checks que genera ARC se asocian a esos registros, así el orden de la conmutación lo decide ARC y no Route 53. Los hostnames regionales (`use2.app`, `use1.app`) apuntan siempre a su propio ALB, para diagnóstico.
 
@@ -69,7 +69,7 @@ Tras un switchover, la región que queda como secundaria mantiene el `desired_co
 ValidationException: activePassive plans must not specify target action 'deactivate'.
 ```
 
-Sólo se permiten workflows `activate` (uno por región). En consecuencia, ARC no ejecuta ninguna acción sobre la región que se desactiva. Para devolverla a pilot light hay que bajarla a 0 fuera del plan:
+Sólo se permiten workflows `activate` (uno por región). En consecuencia, ARC no ejecuta ninguna acción sobre la región que se desactiva. Con el patrón warm standby esto es indistinto: la región saliente vuelve a quedar en 1 tarea fallando en bucle (su Aurora pasó a reader), que es exactamente su estado normal de espera. Si en cambio se quisiera apagarla del todo, habría que bajarla a 0 fuera del plan:
 
 ```bash
 aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0
@@ -77,9 +77,9 @@ aws ecs update-service --region <saliente> --cluster <cluster> --service <servic
 
 Se probó agregar los workflows `deactivate` (con un paso `ECSServiceScaling` a `target_percent = 0`) y AWS los rechazó con el error de arriba. Una alternativa sería un paso `custom_action_lambda` dentro del workflow `activate`, pero reintroduce una Lambda que el diseño busca evitar.
 
-### Por qué la región en espera no puede correr "warm" (en 1 tarea)
+### Por qué la región en espera falla hasta la promoción
 
-Una idea tentadora es dejar las dos regiones siempre en 1 tarea (warm standby) y saltear el escalado. **No funciona con este Keycloak.** El driver JDBC de PostgreSQL está configurado con `targetServerType=primary`: sólo se conecta al nodo *writer*. Mientras una región es secundaria, su clúster Aurora local es de sólo lectura, así que la tarea de Keycloak ni siquiera abre la conexión y falla al arrancar, entrando en un bucle de reinicio. Verificado contra el log real de la tarea:
+Las dos regiones corren 1 tarea (warm standby simétrico). La tarea de la región en espera **no arranca sana** mientras su Aurora es réplica: el driver JDBC de PostgreSQL está configurado con `targetServerType=primary` y sólo se conecta al nodo *writer*, así que contra un reader ni siquiera abre la conexión y el container entra en bucle de reinicio. Verificado contra el log real de la tarea:
 
 ```
 ERROR: Could not find a server with specified targetServerType: primary
@@ -87,7 +87,11 @@ ERROR: Failed to obtain JDBC connection
 ERROR: Failed to start server in (production) mode
 ```
 
-Por eso el pilot light (secundaria en 0 tareas) es **obligatorio**, y el paso `ECSServiceScaling` del plan es imprescindible: arranca Keycloak en la región destino recién *después* de que su Aurora fue promovido a writer, que es el único momento en que el driver puede conectar.
+Esto es un **efecto conocido y aceptado** de la estrategia warm standby elegida, no un error a corregir: se prefiere mantener las dos regiones con configuración idéntica (misma task definition, misma escala) a costa de que la región pasiva corra su tarea en fallo. Cuando ARC promueve el Aurora de esa región a writer durante el switchover, el mismo endpoint local pasa a aceptar conexiones y la tarea arranca sana sin cambiar nada más.
+
+El paso `ECSServiceScaling` del plan sigue siendo útil: tras la promoción, reafirma la capacidad de la región destino y actúa como gate de salud antes de conmutar el DNS, así Route 53 no mueve el tráfico hasta que la tarea recién sana esté registrada.
+
+> Alternativa no elegida: un **pilot light** (región en espera en `desired_count=0`) evita el container en fallo y ahorra el cómputo ECS de la región pasiva, pero rompe la simetría entre regiones. Se descartó a favor del warm standby.
 
 ## Estructura del código
 
@@ -102,7 +106,7 @@ terragrunt/                          # orquestación por capas
 │   └── drarch-use1/laboratory/      # Virginia: ídem
 └── workload/
     ├── drarch-use2/laboratory/      # Ohio: ECS service
-    ├── drarch-use1/laboratory/      # Virginia: ECS service en 0 tareas
+    ├── drarch-use1/laboratory/      # Virginia: ECS service (warm, misma config que Ohio)
     └── drarch-arc/laboratory/       # plan de ARC, rol IAM y DNS failover
 ```
 
@@ -114,7 +118,7 @@ existe. Detalle y DAG en [terragrunt/README.md](../terragrunt/README.md).
 
 La red (VPC, subredes, NAT) se asume preexistente y se resuelve por tag `Name`. No hace falta
 peering ni conectividad interregional: cada Keycloak conecta al clúster Aurora de su propia
-región (pilot light).
+región.
 
 Todo se compone con los wrappers de la [Standard Platform de gocloudLa](https://github.com/gocloudLa): `wrapper-rds-aurora`, `wrapper-alb`, `wrapper-ecs`, `wrapper-ecs-service` y `wrapper-ecr`. No se mezclan orígenes de módulos.
 

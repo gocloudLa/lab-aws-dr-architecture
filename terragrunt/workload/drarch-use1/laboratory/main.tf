@@ -25,15 +25,16 @@ module "ecs_service" {
       assign_public_ip = false
       launch_type      = "FARGATE"
 
-      # Igual que Ohio, la escala se maneja por Application Auto Scaling porque el módulo base
-      # ignora desired_count. Virginia arranca en 0 (piso 0) y ARC la sube durante el
-      # switchover ajustando este scalable target hasta el desired count de la región origen.
-      # El techo permite que ARC pueda escalar a 1 tarea (target_percent=100 del paso
-      # ECSServiceScaling); el piso 0 la mantiene apagada en operación normal.
+      # Warm standby: Virginia usa la misma configuración que Ohio (min=max=desired). Corre 1
+      # tarea permanentemente. Mientras Virginia es secundaria, su clúster Aurora local es de
+      # sólo lectura y el driver JDBC de Keycloak (targetServerType=primary) no puede conectar,
+      # así que el container falla en bucle de reinicio. Es un efecto ACEPTADO de esta
+      # estrategia: la región pasiva corre "caliente" (tarea programada) aunque no sana, hasta
+      # que ARC promueve su Aurora a writer durante la conmutación y el container arranca bien.
       desired_count            = var.ecs_desired_count
       enable_autoscaling       = true
-      autoscaling_min_capacity = 0
-      autoscaling_max_capacity = 1
+      autoscaling_min_capacity = var.ecs_desired_count
+      autoscaling_max_capacity = var.ecs_desired_count
       enable_execute_command   = true
       cpu                    = 1024
       memory                 = 2048
@@ -57,9 +58,9 @@ module "ecs_service" {
             AWS_REGION = var.aws_region
 
             # Endpoint del clúster Aurora local a esta región. Mientras la región es
-            # secundaria ese endpoint es de sólo lectura, por eso su ECS queda en 0 tareas;
-            # cuando ARC promueve el clúster, el mismo hostname acepta escrituras sin que
-            # Keycloak deba reconectar a otro DB_HOST.
+            # secundaria ese endpoint es de sólo lectura, así que la tarea de Keycloak falla
+            # en bucle (warm standby); cuando ARC promueve el clúster, el mismo hostname
+            # acepta escrituras y el container arranca sano sin reconectar a otro DB_HOST.
             DB_HOST = var.db_host
             DB_PORT = "5432"
             DB_NAME = var.database_name

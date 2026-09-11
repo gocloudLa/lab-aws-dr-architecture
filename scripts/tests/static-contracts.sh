@@ -40,13 +40,14 @@ dns_line=$(grep -n 'execution_block_type = "Route53HealthCheck"' "$tg_arc/main.t
 [[ -n "$aurora_line" && -n "$ecs_line" && -n "$dns_line" ]] || fail "Faltan pasos en el plan de ARC"
 (( aurora_line < ecs_line && ecs_line < dns_line )) || fail "El plan de ARC debe ordenar Aurora, luego ECS y por último DNS"
 
-# Pilot light: cada Keycloak conecta al clúster Aurora de su propia región, nunca al Global
-# Writer Endpoint compartido, así que no hace falta peering entre VPC.
+# Cada Keycloak conecta al clúster Aurora de su propia región, nunca al Global Writer Endpoint
+# compartido, así que no hace falta peering entre VPC.
 grep -Eq 'DB_HOST = var\.db_host' "$tg_wl_use2/main.tf" || fail "El workload use2 debe usar var.db_host como DB_HOST"
 grep -Eq 'aurora_cluster_endpoint' "$tg_wl_use2/terragrunt.hcl" || fail "db_host debe venir del endpoint del clúster regional"
 
-# La región en espera arranca en 0 tareas; la escala el plan de ARC.
-grep -Eq 'ecs_desired_count = 0' "$tg_wl_use1/terragrunt.hcl" || fail "El workload use1 debe arrancar en pilot light (0 tareas)"
+# Warm standby: ambas regiones corren 1 tarea. La secundaria falla en bucle hasta que ARC
+# promueve su Aurora; es un efecto aceptado del patrón, no un pilot light.
+grep -Eq 'ecs_desired_count = 1' "$tg_wl_use1/terragrunt.hcl" || fail "El workload use1 debe correr warm (1 tarea)"
 
 # El ingress de Aurora sólo abre el CIDR local: si reapareciera el CIDR remoto, volvería la
 # dependencia de peering que este diseño elimina.

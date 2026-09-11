@@ -4,7 +4,7 @@ variable "primary_region" {
 }
 
 variable "secondary_region" {
-  description = "Región que arranca como réplica y queda en pilot light."
+  description = "Región que arranca como réplica (warm standby: corre 1 tarea que falla hasta la promoción)."
   type        = string
 }
 

@@ -6,9 +6,11 @@ Lab de Disaster Recovery en AWS para AWS Community Day: recuperación regional d
 sobre **Aurora PostgreSQL Global Database**, con conmutación orquestada por **AWS Application
 Recovery Controller (ARC) Region switch**.
 
-El patrón es **pilot light regional**: una región sirve el tráfico con su ECS corriendo; la
-otra tiene su clúster Aurora replicando pero el ECS en 0 tareas. Ante un DR, ARC promueve
-Aurora en la región destino, escala su ECS y recién entonces conmuta el DNS público.
+El patrón es **warm standby regional**: las dos regiones corren su ECS con 1 tarea y su Aurora
+replicando. La región activa sirve el tráfico; la región en espera corre su tarea pero, mientras
+su Aurora es réplica de sólo lectura, el container de Keycloak falla en bucle hasta la
+conmutación (efecto aceptado del patrón). Ante un DR, ARC promueve Aurora en la región destino,
+reafirma su ECS y recién entonces conmuta el DNS público.
 
 Regiones: **us-east-2 (Ohio)** primaria / **us-east-1 (Virginia)** secundaria.
 
@@ -47,7 +49,7 @@ La operación de la demo (bootstrap del realm, switchover, failback) se maneja c
 | Documento | Contenido |
 |---|---|
 | [docs/demo.md](docs/demo.md) | Guía punta a punta: aplicar el stack, bootstrap del realm, ensayo de switchover y failback, con la referencia de comandos `make` |
-| [docs/architecture.md](docs/architecture.md) | Diseño de la solución: pilot light regional, red, datos, ARC, decisiones y tradeoffs |
+| [docs/architecture.md](docs/architecture.md) | Diseño de la solución: warm standby regional, red, datos, ARC, decisiones y tradeoffs |
 | [docs/diagrams/](docs/diagrams/) | Diagrama editable (`.drawio`) de la arquitectura completa |
 | [terragrunt/README.md](terragrunt/README.md) | Por qué seis capas, el DAG, convenciones de naming, hostnames y state |
 | [app/README.md](app/README.md) | La imagen de Keycloak: variables, TLS con RDS, endpoints de salud |

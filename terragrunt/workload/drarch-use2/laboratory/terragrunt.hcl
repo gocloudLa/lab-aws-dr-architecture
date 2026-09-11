@@ -61,7 +61,7 @@ inputs = {
   # Imagen publicada en ambos ECR con digest idéntico (make build-push TAG=demo-v1).
   container_image_tag = "demo-v1"
 
-  # Ohio es la región primaria del patrón pilot-light: corre 1 tarea. Virginia queda en 0 y
-  # ARC la escala durante el switchover, después de promover Aurora.
+  # Warm standby: Ohio y Virginia corren 1 tarea (misma config). Ohio arranca como writer, así
+  # que su tarea está sana; Virginia corre pero falla en bucle hasta que ARC promueve su Aurora.
   ecs_desired_count = 1
 }

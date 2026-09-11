@@ -9,10 +9,12 @@ for name in ecr_repository_urls ecs_cluster_names ecs_service_names regional_app
   jq -e --arg name "$name" '.[$name].value != null' <<<"$outputs" >/dev/null || { echo "Falta output de infraestructura: $name" >&2; exit 65; }
 done
 
-# Pilot light: sólo la región con rol inicial "writer" debe estar warm y servir OIDC. La
-# región "reader" arranca en 0 tareas a propósito; ARC la escala durante la conmutación.
-# region_roles refleja el rol inicial del stack, no el estado real post-conmutación:
-# correr este preflight después de un switchover exige antes revisar la región activa a mano.
+# Warm standby: ambas regiones corren 1 tarea, pero sólo la región con rol inicial "writer"
+# tiene su Keycloak sano y sirviendo OIDC. La región "reader" corre su tarea en bucle de
+# reinicio a propósito (su Aurora es de sólo lectura), así que sólo se valida que su servicio
+# esté programado (desiredCount > 0), no que esté sano. region_roles refleja el rol inicial
+# del stack, no el estado real post-conmutación: correr este preflight después de un
+# switchover exige antes revisar la región activa a mano.
 primary_region=$(jq -r '.region_roles.value.primary.region' <<<"$outputs")
 
 instance_class=$(jq -r '.aurora_instance_class.value' <<<"$outputs")
@@ -40,8 +42,10 @@ for region in us-east-2 us-east-1; do
       | jq -e --arg issuer "$expected_issuer" '.issuer == $issuer' >/dev/null \
       || { echo "OIDC regional no está listo en $region" >&2; exit 70; }
   else
-    jq -e '.services[0].desiredCount == 0' <<<"$service_state" >/dev/null \
-      || { echo "ECS secundario debería estar en pilot light (desiredCount=0) en $region" >&2; exit 70; }
+    # Warm standby: la secundaria debe estar programada (desiredCount > 0), pero su tarea no
+    # arranca sana mientras su Aurora es reader; por eso no se exige runningCount ni OIDC.
+    jq -e '.services[0].desiredCount > 0' <<<"$service_state" >/dev/null \
+      || { echo "ECS secundario debería estar warm (desiredCount > 0) en $region" >&2; exit 70; }
   fi
 done
 plan_arn=$(jq -r '.arc_plan_arn.value' <<<"$outputs")

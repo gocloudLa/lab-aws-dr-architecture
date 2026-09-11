@@ -58,9 +58,9 @@ module "ecs_service" {
             AWS_REGION = var.aws_region
 
             # Endpoint del clúster Aurora local a esta región. Mientras la región es
-            # secundaria ese endpoint es de sólo lectura, por eso su ECS queda en 0 tareas;
-            # cuando ARC promueve el clúster, el mismo hostname acepta escrituras sin que
-            # Keycloak deba reconectar a otro DB_HOST.
+            # secundaria ese endpoint es de sólo lectura, así que la tarea de Keycloak falla
+            # en bucle (warm standby); cuando ARC promueve el clúster, el mismo hostname
+            # acepta escrituras y el container arranca sano sin reconectar a otro DB_HOST.
             DB_HOST = var.db_host
             DB_PORT = "5432"
             DB_NAME = var.database_name

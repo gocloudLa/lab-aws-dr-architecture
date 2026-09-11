@@ -26,7 +26,7 @@ project/drarch-global/laboratory    # aws_rds_global_cluster + credenciales comp
 project/drarch-use2/laboratory       # Ohio: ECR, Aurora, ALB, clúster ECS
 project/drarch-use1/laboratory       # Virginia: ídem
 workload/drarch-use2/laboratory      # Ohio: ECS service
-workload/drarch-use1/laboratory      # Virginia: ECS service (0 tareas, pilot light)
+workload/drarch-use1/laboratory      # Virginia: ECS service (warm, misma config que Ohio)
 workload/drarch-arc/laboratory       # plan de ARC, rol IAM y registros Route 53 FAILOVER
 ```
 
@@ -37,7 +37,7 @@ La red se resuelve por tag `Name`, no por ID: la VPC debe tener subredes públic
 privadas con salida por NAT (ECS) y de base de datos, más un security group por defecto
 etiquetado, con el prefijo de nombre que fija `metadata` en cada capa. **No hace falta peering
 ni conectividad interregional**: cada Keycloak conecta siempre al clúster Aurora de su propia
-región (patrón pilot light, ver [architecture.md](architecture.md)).
+región (patrón warm standby, ver [architecture.md](architecture.md)).
 
 ## 1. Aplicar el stack
 
@@ -49,8 +49,9 @@ make tg-apply     # un comando, respeta el DAG (~20 min; Aurora domina, ~7 min p
 ```
 
 Es reanudable: si las credenciales expiran a mitad, el state de cada capa ya aplicada
-persiste y alcanza con volver a correrlo. Cada capa arranca con `ecs_desired_count = 0` en la
-región secundaria (pilot light), que ARC escala durante la conmutación.
+persiste y alcanza con volver a correrlo. Las dos regiones arrancan con `ecs_desired_count = 1`
+(warm standby); la tarea de la región secundaria falla en bucle hasta que ARC promueve su
+Aurora durante la conmutación.
 
 Notas de configuración de este lab, ya fijadas en el código:
 
@@ -71,10 +72,11 @@ make build-push TAG=demo-v1
 
 ## 3. Habilitar el servicio en la región primaria
 
-La región primaria (Ohio) arranca con su ECS service en 1 tarea. La secundaria (Virginia)
-queda en **pilot light** (0 tareas), porque su clúster Aurora es réplica de sólo lectura y
-Keycloak no podría completar su migración de escritura contra él. El plan de ARC la escala
-durante la conmutación, después de promover Aurora (ver paso 6).
+Las dos regiones arrancan con su ECS service en 1 tarea (**warm standby**, misma config). La
+primaria (Ohio) corre sana. La secundaria (Virginia) tiene su tarea programada pero **falla en
+bucle** mientras su clúster Aurora es réplica de sólo lectura (el driver de Keycloak sólo
+conecta al writer). Es un efecto aceptado del patrón; la tarea arranca sana recién cuando ARC
+promueve su Aurora durante la conmutación (ver paso 6).
 
 ## 4. Cargar el realm de demo
 
@@ -104,9 +106,10 @@ make preflight
 make demo-precheck
 ```
 
-Exigen la tarea ECS primaria en ejecución y su endpoint regional saludable. La región
-secundaria está en pilot light (0 tareas) hasta la conmutación, así que su ECS no se valida
-acá. Consultan AWS; no prueban por sí solos writer, DNS, TLS ni RTO/RPO.
+Exigen la tarea ECS primaria en ejecución y su endpoint regional saludable. De la región
+secundaria sólo se valida que su servicio esté programado (1 tarea); no que esté sano, porque
+mientras su Aurora es reader la tarea falla a propósito (warm standby). Consultan AWS; no
+prueban por sí solos writer, DNS, TLS ni RTO/RPO.
 
 ## 6. Ensayo de conmutación (switchover)
 
@@ -137,8 +140,8 @@ seguí con `make arc-poll`. Iniciar un segundo `arc-start` mientras hay una ejec
 falla con `There is already an execution ongoing`: es la misma conmutación, no un error.
 
 El plan hace exactamente tres cosas, en orden estricto: promueve Aurora en la región destino,
-escala el ECS de esa región de 0 a N tareas (pilot light: recién ahí arranca Keycloak, con su
-clúster local ya promovido y escribible), y por último mueve el health check de Route 53. El
+reafirma el ECS de esa región (warm standby: la tarea ya corría pero recién ahora su clúster
+local es writer y arranca sana), y por último mueve el health check de Route 53. El
 paso de ECS sí es un gate: ARC espera a que la capacidad pedida esté corriendo (o el timeout)
 antes de tocar el DNS, así que Route 53 no publica un ALB sin backend. No hay, en cambio,
 comprobación de que Keycloak ya pasó su propio health check de aplicación más allá de lo que
@@ -183,18 +186,17 @@ make arc-poll OPERATION=switchover EXECUTION_ID=us-east-2/xxxxxxxxxxxxxxxx
 Validar después: el writer de Aurora volvió a la región original, su ECS corre, y
 `app.<dominio>` resuelve al ALB de esa región.
 
-La región que queda en espera **no** se baja a 0 automáticamente: el plan de ARC sólo escala
-la región que activa, no apaga la saliente. Con warm standby (ambas regiones en 1 tarea) eso
-es el comportamiento esperado y hace el failback más rápido. Si preferís pilot light estricto
-(pagar una sola región a la vez), bajar la saliente a mano con
-`aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0`.
+La región que queda en espera sigue en 1 tarea: el plan de ARC sólo escala la región que
+activa, no apaga la saliente. Con warm standby eso es el comportamiento esperado — la saliente
+vuelve a su estado de espera (tarea programada que falla en bucle porque su Aurora pasó a
+reader). Si excepcionalmente quisieras apagarla del todo, bajála a mano con
+`aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0`;
 `desired_count` está en `ignore_changes`, así que un `make tg-apply` posterior no lo pisa.
 
 ## 8. Desmontar
 
-Detener ambos servicios ECS (`aws ecs update-service --desired-count 0` en la región que haya
-quedado activa; la otra ya puede seguir en pilot light) y confirmar que no haya ejecuciones
-ARC activas. Conservar un snapshot manual si hay datos a retener. `deletion_protection` está
+Detener ambos servicios ECS (`aws ecs update-service --desired-count 0` en las dos regiones) y
+confirmar que no haya ejecuciones ARC activas. Conservar un snapshot manual si hay datos a retener. `deletion_protection` está
 en `true` por defecto en las capas de Aurora: bajarlo a `false` sólo cuando el borrado esté
 autorizado, y recién ahí destruir.
 
