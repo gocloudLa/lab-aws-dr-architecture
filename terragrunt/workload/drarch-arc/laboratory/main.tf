@@ -130,9 +130,8 @@ resource "aws_iam_role_policy" "arc" {
 /* ARC Region switch | Plan de conmutación                              */
 /*----------------------------------------------------------------------*/
 
-# Tres pasos, en orden estricto: Aurora cambia de writer, después el ECS de la región
-# destino escala de 0 a N tareas (pilot light: recién ahí arranca Keycloak, con su clúster
-# local ya promovido y escribible) y por último DNS publica el ALB destino.
+# Tres pasos, en orden estricto: Aurora cambia de writer, después el ECS de la región destino
+# escala de 0 a N tareas (pilot light) y por último DNS publica el ALB destino.
 resource "aws_arcregionswitch_plan" "this" {
   name                            = "${local.common_name}-recovery"
   description                     = "Promueve Aurora Global Database, escala el ECS destino y despues conmuta el DNS publico"

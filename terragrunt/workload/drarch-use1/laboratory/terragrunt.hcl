@@ -57,9 +57,10 @@ inputs = {
   container_image_tag = "demo-v1"
 
   # Pilot light: la región en espera arranca siempre en 0 tareas. Su clúster Aurora es
-  # réplica de sólo lectura, así que Keycloak no podría completar su migración de escritura.
-  # El plan de ARC la escala durante la conmutación, después de promover Aurora y antes de
-  # mover el DNS. desired_count está en ignore_changes dentro del wrapper, así que un
-  # apply posterior no vuelve a bajarla a 0.
+  # réplica de sólo lectura, y el driver JDBC de Keycloak usa targetServerType=primary: contra
+  # un reader ni siquiera abre la conexión ("Could not find a server with specified
+  # targetServerType: primary"), así que la tarea nunca arranca sana. El plan de ARC la escala
+  # durante la conmutación, después de promover Aurora y antes de mover el DNS. desired_count
+  # está en ignore_changes dentro del wrapper, así que un apply posterior no la vuelve a 0.
   ecs_desired_count = 0
 }
