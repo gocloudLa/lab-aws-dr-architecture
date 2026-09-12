@@ -1,6 +1,6 @@
 # Arquitectura
 
-Recuperación regional de Keycloak sobre Aurora PostgreSQL Global Database, con un patrón **warm standby regional**: las dos regiones conservan `desiredCount=1` en ECS y su clúster Aurora replicando. La región activa sirve el tráfico; la región en espera puede tener la task reiniciándose o unhealthy mientras Aurora sea reader. ARC Region switch promueve Aurora, estabiliza el ECS destino y recién entonces conmuta el DNS.
+Recuperación regional de Keycloak sobre Aurora PostgreSQL Global Database, con un patrón **warm standby regional**: las dos regiones conservan `desiredCount=1` en ECS y su clúster Aurora replicando. La región activa sirve el tráfico; la región en espera mantiene su task sana gracias al **write forwarding** de Aurora Global Database, que reenvía al writer las pocas escrituras que Keycloak necesita para arrancar y mantenerse listo. ARC Region switch promueve Aurora, reafirma el ECS destino y recién entonces conmuta el DNS.
 
 ```mermaid
 flowchart LR
@@ -21,11 +21,12 @@ El diagrama editable de toda la solución está en [diagrams](diagrams).
 
 ## Warm standby regional
 
-Las dos regiones usan la **misma configuración**: clúster Aurora replicando y ECS con 1 tarea deseada (`desired_count=1`, autoscaling `min=max=1`). La región activa sirve tráfico normalmente. En la región en espera el demo precheck sólo exige `desiredCount > 0`; no exige una task `RUNNING` ni un target saludable porque Aurora reader no habilita las escrituras que Keycloak pueda necesitar.
+Las dos regiones usan la **misma configuración**: clúster Aurora replicando y ECS con 1 tarea deseada (`desired_count=1`, autoscaling `min=max=1`). La región activa sirve tráfico normalmente. La región en espera corre Keycloak contra su Aurora reader con **write forwarding** habilitado, así que su task arranca, pasa `/health/ready` y queda estable sin recibir tráfico. El demo precheck igual exige en la reader sólo `desiredCount > 0`, como margen para el arranque en frío y para el caso en que el writer remoto no sea alcanzable.
 
-Esta es una decisión de diseño explícita: se mantienen las dos regiones simétricas, pero la región reader no se publica ni se considera funcionalmente lista hasta la promoción. Consecuencias a decir en voz alta:
+Esta es una decisión de diseño explícita: se mantienen las dos regiones simétricas y la región reader es funcional pero no se publica hasta la promoción. Consecuencias a decir en voz alta:
 
-- El RTO no depende sólo de la promoción de Aurora y del DNS: tras promover, ARC debe alcanzar la capacidad objetivo del ECS destino. Aunque ya existía `desiredCount=1`, la task puede necesitar arrancar o estabilizarse; hay que medir ese tiempo y la primera escritura confirmada contra Aurora recién promovido.
+- Keycloak no soporta correr contra una base de sólo lectura: toma un lock con `SELECT ... FOR UPDATE` al arrancar y escribe en cada login (sesiones persistentes, eventos). Sin write forwarding la task de la región reader cicla indefinidamente, y el circuit breaker de ECS termina marcando la deployment como `FAILED` y deja de lanzar tasks; en ese estado el paso `ECSServiceScaling` de ARC agota su timeout y el switchover falla.
+- El RTO no depende sólo de la promoción de Aurora y del DNS: tras promover, ARC debe alcanzar la capacidad objetivo del ECS destino. Con la task ya sana ese paso debería ser inmediato; hay que medir ese tiempo y la primera escritura confirmada contra Aurora recién promovido.
 - Se paga cómputo ECS de **ambas** regiones todo el tiempo, más el clúster Aurora replicando y el ALB. Es más caro que un pilot light, y es el trade-off aceptado del warm standby simétrico.
 - Cada Keycloak conecta siempre al clúster Aurora de su **propia** región, nunca al de la otra: no hay ninguna carga que necesite alcanzar por PostgreSQL una VPC remota.
 
@@ -39,7 +40,18 @@ Aurora no tiene acceso público. Las tareas ECS corren en subredes privadas sin 
 
 Aurora Global Database mantiene el writer inicial en Ohio y una réplica asíncrona en Virginia, con una instancia provisioned por región (`aurora_instance_class`, memory-optimized; Aurora Global Database no admite clases burstable como `db.t3`/`db.t4g`). Una instancia por clúster es una elección de demo y **no** equivale a alta disponibilidad completa dentro de una región.
 
-`DB_HOST` es el endpoint del clúster Aurora **regional**, distinto en cada región (no el Global Writer Endpoint compartido). Mientras una región es secundaria, su endpoint local es de sólo lectura. `KC_DB_URL_PROPERTIES=?targetServerType=any` permite que el driver abra la conexión contra ese reader, pero cualquier operación que requiera escritura depende de que ARC promueva el clúster. Tras la promoción, el mismo hostname empieza a aceptar escrituras sin que Keycloak deba cambiar de `DB_HOST`. No hay RDS Proxy, CNAME de base de datos, Lambda de writer ni cambio de DNS privado.
+`DB_HOST` es el endpoint del clúster Aurora **regional**, distinto en cada región (no el Global Writer Endpoint compartido). Mientras una región es secundaria, su endpoint local es de sólo lectura. `KC_DB_URL_PROPERTIES=?targetServerType=any` permite que el driver abra la conexión contra ese reader (pgjdbc lo sigue viendo como réplica aunque forwardee). Tras la promoción, el mismo hostname empieza a aceptar escrituras sin que Keycloak deba cambiar de `DB_HOST`. No hay RDS Proxy, CNAME de base de datos, Lambda de writer ni cambio de DNS privado.
+
+### Write forwarding
+
+Los dos clústeres regionales declaran `enable_global_write_forwarding = true`. Mientras un clúster es secundario, sus readers reenvían por el canal interno de Aurora (sin peering ni rutas entre VPC) las sentencias de escritura al writer de la región primaria, y el resultado vuelve por el mismo camino. El flag se declara en ambos porque un switchover invierte los roles: en el primario queda latente y se activa en cuanto lo degradan.
+
+Lo que Keycloak necesita está dentro de lo soportado: DML (`INSERT/UPDATE/DELETE`), `SELECT ... FOR UPDATE` (el lock de bootstrap de Liquibase) y `PREPARE/EXECUTE`, con aislamiento `READ COMMITTED` y consistencia `SESSION` por defecto. Límites a tener presentes:
+
+- **No se forwardea DDL.** Las migraciones de esquema de Keycloak deben correr primero en la región activa; al subir de versión de imagen, desplegar la región writer antes que la reader.
+- Tampoco `SAVEPOINT`, `LOCK`, cursores ni `SERIALIZABLE`; Keycloak no los usa.
+- Cada escritura de la región en espera cruza regiones (~10-15 ms use1↔use2). Irrelevante sin tráfico; a considerar si alguna vez se sirviera tráfico desde la reader.
+- En un desastre real el writer remoto no existe: el forwarding falla y la task de la reader vuelve a ciclar hasta la promoción. El forwarding resuelve el switchover planificado, no reemplaza al plan de ARC.
 
 ## DNS y TLS
 
@@ -87,7 +99,7 @@ ERROR: Failed to obtain JDBC connection
 ERROR: Failed to start server in (production) mode
 ```
 
-La configuración actual corrige esa comprobación en ambas task definitions con `targetServerType=any`. Esto permite intentar mantener el proceso contra el reader, pero no convierte a Aurora en escribible ni garantiza una task estable o un health check sano. Por eso los prechecks exigen estabilidad ECS y OIDC sólo en el writer; en la reader sólo comprueban `desiredCount > 0`. Cuando ARC promueve Aurora, el mismo endpoint local pasa a aceptar escrituras.
+La configuración actual corrige esa comprobación en ambas task definitions con `targetServerType=any`, y el write forwarding de Aurora (ver [Write forwarding](#write-forwarding)) reenvía al writer el lock de bootstrap y las escrituras de runtime, así que la task de la reader se espera `RUNNING` y con target sano. Los prechecks exigen estabilidad ECS y OIDC sólo en el writer; en la reader comprueban `desiredCount > 0`, dejando margen al arranque en frío. Cuando ARC promueve Aurora, el mismo endpoint local pasa a aceptar escrituras y el forwarding deja de intervenir.
 
 El paso `ECSServiceScaling` del plan sigue siendo útil: tras la promoción, reafirma la capacidad de la región destino y actúa como gate de capacidad antes de conmutar el DNS. No reemplaza una comprobación funcional de Keycloak; esa diferencia debe medirse durante el ensayo.
 
@@ -169,6 +181,7 @@ El output `global_writer_endpoint` del stack sigue existiendo (agrupa los dos cl
 ## Fuentes
 
 - [Conexión a una Aurora Global Database](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-global-database-connecting.html)
+- [Write forwarding en Aurora PostgreSQL Global Database](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-global-database-write-forwarding-apg.html)
 - [SSL para RDS PostgreSQL](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html)
 - [ARC Region switch: bloque Aurora](https://docs.aws.amazon.com/r53recovery/latest/dg/aurora-global-database-block.html)
 - [ARC Region switch: bloque Route 53](https://docs.aws.amazon.com/r53recovery/latest/dg/route53-health-check-block.html)

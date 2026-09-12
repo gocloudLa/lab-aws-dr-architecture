@@ -62,6 +62,15 @@ module "aurora" {
       master_username           = var.database_admin_username
       master_password           = var.database_password
 
+      # Write forwarding: mientras este clúster sea secundario, reenvía por el canal interno
+      # de Aurora las escrituras que Keycloak necesita para arrancar (SELECT ... FOR UPDATE
+      # del lock de Liquibase) y operar (sesiones, eventos) al writer de la otra región. Así
+      # la task warm standby está sana sin peering ni cambio de DB_HOST. Se declara en ambas
+      # regiones porque un switchover invierte los roles: en el primario queda latente hasta
+      # que lo degraden. No cubre DDL, así que las migraciones de esquema deben correr
+      # primero en la región activa.
+      enable_global_write_forwarding = true
+
       subnets = data.aws_subnets.database.ids
 
       cluster_parameter_group_family = "aurora-postgresql${split(".", var.aurora_engine_version)[0]}"

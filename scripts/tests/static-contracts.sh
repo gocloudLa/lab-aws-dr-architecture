@@ -10,6 +10,7 @@ tg_arc="$tg/workload/drarch-arc/laboratory"
 tg_wl_use2="$tg/workload/drarch-use2/laboratory"
 tg_wl_use1="$tg/workload/drarch-use1/laboratory"
 tg_proj_use2="$tg/project/drarch-use2/laboratory"
+tg_proj_use1="$tg/project/drarch-use1/laboratory"
 
 fail() { echo "$1" >&2; exit 1; }
 
@@ -87,6 +88,14 @@ done
 grep -Eq 'cidr_blocks = join\(",", local\.app_cidr_blocks\)' "$tg_proj_use2/main.tf" \
   || fail "El ingress de Aurora debe usar sólo los CIDR de su propia región"
 grep -q 'peer_app_cidr_blocks' "$tg_proj_use2/main.tf" && fail "Reapareció peer_app_cidr_blocks: eso reintroduce la dependencia de peering"
+
+# Warm standby real: el clúster secundario reenvía las escrituras de Keycloak (lock de
+# bootstrap, sesiones) al writer de la otra región. Va en ambos clústeres porque tras un
+# switchover se invierten los roles; en el primario queda latente hasta que lo degraden.
+for project_main in "$tg_proj_use2/main.tf" "$tg_proj_use1/main.tf"; do
+  grep -Eq 'enable_global_write_forwarding[[:space:]]*=[[:space:]]*true' "$project_main" \
+    || fail "Cada clúster Aurora regional debe habilitar enable_global_write_forwarding"
+done
 
 # Aurora Global Database no admite clases burstable.
 grep -Eq 'contains\(\["t3", "t4g"\]' "$tg_proj_use2/variables.tf" \

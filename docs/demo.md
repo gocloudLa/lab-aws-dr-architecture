@@ -81,9 +81,9 @@ ECR, se reutiliza; para publicar cambios de la aplicación hay que elegir un tag
 
 Es reanudable: si las credenciales expiran a mitad, el state de cada capa ya aplicada
 persiste y alcanza con volver a correrlo con el mismo `IMAGE_TAG`. Las dos regiones arrancan
-con `ecs_desired_count = 1` (warm standby). La tarea secundaria puede conectar al endpoint reader por
-`targetServerType=any`, pero no se considera apta para tráfico hasta que ARC promueva su
-Aurora y habilite escrituras.
+con `ecs_desired_count = 1` (warm standby). La tarea secundaria conecta al endpoint reader por
+`targetServerType=any` y arranca sana porque Aurora reenvía sus escrituras al writer (write
+forwarding); no recibe tráfico hasta que ARC promueva su Aurora.
 
 Notas de configuración de este lab, ya fijadas en el código:
 
@@ -114,10 +114,12 @@ reanudar una etapa puntual. El segundo sólo debe ejecutarse después de que la 
 ## 3. Verificar el estado warm de las dos regiones
 
 Las dos regiones arrancan con su ECS service configurado en 1 tarea (**warm standby**, misma
-config). En Virginia el demo precheck sólo exige `desiredCount > 0`: la task puede estar reiniciándose
-o el target del ALB puede figurar `unhealthy` porque Aurora reader no acepta escrituras. Ese
-estado es aceptado en espera y no recibe tráfico. La promoción de Aurora durante la conmutación
-habilita la operación completa en Virginia (ver paso 6).
+config). En Virginia se espera la task `RUNNING` y el target del ALB `healthy`: el write forwarding
+de Aurora le permite a Keycloak completar el arranque contra el reader. El demo precheck igual
+sólo exige `desiredCount > 0` en la reader, como margen para un arranque en frío. Si la task
+cicla o el target figura `unhealthy`, revisá el forwarding (`GlobalWriteForwardingStatus` del
+clúster secundario) antes de conmutar: es la señal de que el switchover va a fallar en el
+paso de ECS. La promoción de Aurora durante la conmutación habilita el tráfico en Virginia (ver paso 6).
 
 ## 4. Cargar el realm de demo
 
@@ -185,8 +187,8 @@ seguí con `make arc-poll`. Iniciar un segundo `arc-start` mientras hay una ejec
 falla con `There is already an execution ongoing`: es la misma conmutación, no un error.
 
 El plan hace exactamente tres cosas, en orden estricto: promueve Aurora en la región destino,
-estabiliza el ECS de esa región (warm standby: ya tenía `desiredCount > 0`, pero la task podía
-estar reiniciándose mientras su clúster local era reader), y por último mueve el health check de Route 53. El
+reafirma el ECS de esa región (warm standby: ya tenía `desiredCount > 0` y una task sana
+gracias al write forwarding), y por último mueve el health check de Route 53. El
 paso de ECS sí es un gate: ARC espera a que la capacidad pedida esté corriendo (o el timeout)
 antes de tocar el DNS, así que Route 53 no publica un ALB sin backend. No hay, en cambio,
 comprobación de que Keycloak ya pasó su propio health check de aplicación más allá de lo que
@@ -232,9 +234,9 @@ Validar después: el writer de Aurora volvió a la región original, su ECS corr
 
 La región que queda en espera sigue con `desiredCount=1`: el plan de ARC sólo escala la región que
 activa, no apaga la saliente. Con warm standby eso es el comportamiento esperado — la saliente
-vuelve a su estado de espera con `desiredCount > 0` y Aurora reader. Aunque
-`targetServerType=any` permita abrir la conexión, no se la considera apta para tráfico mientras
-no pueda escribir. Si excepcionalmente quisieras apagarla del todo, bajála a mano con
+vuelve a su estado de espera con `desiredCount > 0` y Aurora reader; su clúster, ahora
+secundario, activa el write forwarding que tenía latente y la task sigue sana. No recibe
+tráfico porque el DNS ya apunta a la otra región. Si excepcionalmente quisieras apagarla del todo, bajála a mano con
 `aws ecs update-service --region <saliente> --cluster <cluster> --service <service> --desired-count 0`;
 `desired_count` está en `ignore_changes`, así que un `make tg-apply` posterior no lo pisa.
 
