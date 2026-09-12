@@ -65,6 +65,11 @@ etiquetado, con el prefijo de nombre que fija `metadata` en cada capa. **No hace
 ni conectividad interregional**: cada Keycloak conecta siempre al clúster Aurora de su propia
 región (patrón warm standby, ver [architecture.md](architecture.md)).
 
+En particular, `DB_HOST` no usa el Global Writer Endpoint. Ohio recibe el endpoint de su
+clúster Aurora de Ohio y Virginia el de su clúster Aurora de Virginia. El Global Writer Endpoint
+queda como output diagnóstico; usarlo desde ambas VPC requeriría conectividad hacia la región
+writer, que esta demo evita.
+
 ## 1. Aplicar el stack y publicar la imagen
 
 Terragrunt v1 quedó instalado en `~/bin`; asegurate de tenerlo en el `PATH`:

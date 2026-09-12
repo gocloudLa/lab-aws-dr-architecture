@@ -14,6 +14,10 @@ ARC promueve su Aurora, reafirma su ECS y recién entonces conmuta el DNS públi
 
 Regiones: **us-east-2 (Ohio)** primaria / **us-east-1 (Virginia)** secundaria.
 
+Cada Keycloak usa como `DB_HOST` el endpoint de su **clúster Aurora regional**. No usa el
+Global Writer Endpoint; ese output se conserva sólo para diagnóstico. Por eso las aplicaciones
+no necesitan peering entre VPC para conectarse a la base de datos.
+
 ## Cómo funciona, en tres líneas
 
 1. Keycloak corre en ECS Fargate detrás de un ALB, contra el clúster Aurora **de su propia
