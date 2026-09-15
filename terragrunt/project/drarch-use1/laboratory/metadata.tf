@@ -44,5 +44,4 @@ locals {
   ecs_cluster_name    = "${local.common_name}-${local.ecs_cluster_key}"
   aurora_cluster_name = "${local.common_name}-${local.region_key}"
   ecr_repository_name = "${local.common_name}-${local.ecr_repository_key}"
-  alb_name            = "${local.common_name}-${local.region_key}"
 }

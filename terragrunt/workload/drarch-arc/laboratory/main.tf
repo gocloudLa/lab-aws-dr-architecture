@@ -27,6 +27,8 @@ resource "aws_iam_role" "arc" {
 }
 
 resource "aws_iam_role_policy" "arc" {
+  #checkov:skip=CKV_AWS_355:Los statements con Resource="*" son para acciones que no admiten scoping por recurso (Describe*/List* de RDS y ECS, application-autoscaling, cloudwatch:GetMetricStatistics); las acciones que sí lo admiten (Failover/SwitchoverGlobalCluster, UpdateService) ya están acotadas a los ARN de esta demo.
+  #checkov:skip=CKV_AWS_290:Ídem — el "*" está limitado a acciones de sólo lectura o a APIs sin soporte de resource-level permissions; ninguna acción de escritura del rol usa "*".
   name = "region-switch-execution"
   role = aws_iam_role.arc.id
 
