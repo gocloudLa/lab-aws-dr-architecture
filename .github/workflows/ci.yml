@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pull-request-validation:
+    name: Pull Request Validation
+    if: github.event_name == 'pull_request'
+    uses: gocloudLa/.github/.github/workflows/pull-request-validation.yml@main
+    with:
+      types: |
+        fix
+        feat
+        ci
+        chore
+        docs
+        refactor
+        test
+      requireScope: false
+
+  repository-validation:
+    name: Repository Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+
+      - name: Setup Terragrunt
+        run: |
+          curl -fsSL -o /usr/local/bin/terragrunt \
+            https://github.com/gruntwork-io/terragrunt/releases/download/v1.1.4/terragrunt_linux_amd64
+          chmod +x /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Initialize layers without backend
+        run: make init
+
+      - name: Validate repository contracts and layers
+        run: make validate
+
+  terraform-lint:
+    name: Terraform Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+          cache: true
+
+      - name: Initialize TFLint plugins
+        working-directory: terragrunt
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+      - name: Run TFLint
+        working-directory: terragrunt
+        run: tflint --recursive --format compact --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+  checkov:
+    name: Checkov
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Scan Terraform with Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terragrunt
+          framework: terraform
+          download_external_modules: false
+          # Los wrappers vienen de Terraform Registry y están fijados con versiones
+          # exactas; CKV_TF_1 exige hashes de Git, que no aplican a ese origen.
+          skip_check: CKV_TF_1
+          quiet: true
+          compact: true
+          output_format: cli
+          soft_fail: false
