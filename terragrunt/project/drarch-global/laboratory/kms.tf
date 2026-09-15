@@ -24,6 +24,9 @@ data "aws_partition" "current" {}
 # Misma política para ambas claves: delega la administración en IAM (no en la sesión efímera
 # de SSO que aplica) y habilita a RDS a cifrar/descifrar el almacenamiento del clúster.
 data "aws_iam_policy_document" "aurora_kms" {
+  #checkov:skip=CKV_AWS_109:Política de recurso de una KMS key, no política de identidad: "*" en resources es el patrón estándar de AWS y se refiere implícitamente a esta clave, no a la cuenta.
+  #checkov:skip=CKV_AWS_356:Ídem — resource-based policy de KMS; "*" es obligatorio en este tipo de política y no habilita acceso fuera de esta clave.
+  #checkov:skip=CKV_AWS_111:Ídem — el acceso de escritura ya está acotado a esta clave por ser su propia resource policy, y el principal de EnableIAMUserPermissions es sólo el root de esta cuenta.
   statement {
     sid       = "EnableIAMUserPermissions"
     actions   = ["kms:*"]
