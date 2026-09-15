@@ -5,7 +5,7 @@ include "root" {
 dependency "global" {
   config_path = "../../drarch-global/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     global_cluster_identifier    = "mock-global"
     aurora_engine_version        = "16.14"

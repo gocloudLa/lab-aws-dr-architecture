@@ -8,7 +8,7 @@ include "root" {
 dependency "project" {
   config_path = "../../../project/drarch-use2/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     aws_region              = "us-east-2"
     region_key              = "use2"
@@ -27,7 +27,7 @@ dependency "project" {
 dependency "global" {
   config_path = "../../../project/drarch-global/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     database_name                     = "keycloak"
     database_admin_username           = "keycloak_admin"

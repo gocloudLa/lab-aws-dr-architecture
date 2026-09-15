@@ -9,7 +9,7 @@ include "root" {
 dependency "global" {
   config_path = "../../../project/drarch-global/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     global_cluster_identifier = "mock-global"
     global_cluster_arn        = "arn:aws:rds::000000000000:global-cluster:mock"
@@ -19,7 +19,7 @@ dependency "global" {
 dependency "project_use2" {
   config_path = "../../../project/drarch-use2/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     aws_region         = "us-east-2"
     region_key         = "use2"
@@ -34,7 +34,7 @@ dependency "project_use2" {
 dependency "project_use1" {
   config_path = "../../../project/drarch-use1/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     aws_region         = "us-east-1"
     region_key         = "use1"
@@ -47,7 +47,7 @@ dependency "project_use1" {
 dependency "workload_use2" {
   config_path = "../../drarch-use2/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     ecs_cluster_arn = "arn:aws:ecs:us-east-2:000000000000:cluster/mock"
     ecs_service_arn = "arn:aws:ecs:us-east-2:000000000000:service/mock/mock"
@@ -57,7 +57,7 @@ dependency "workload_use2" {
 dependency "workload_use1" {
   config_path = "../../drarch-use1/laboratory"
 
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
   mock_outputs = {
     ecs_cluster_arn = "arn:aws:ecs:us-east-1:000000000000:cluster/mock"
     ecs_service_arn = "arn:aws:ecs:us-east-1:000000000000:service/mock/mock"
